@@ -39,6 +39,11 @@
 
 (defgeneric remove-value (db kbuf ksiz))
 
+(defgeneric rem-value (db key)
+  (:method (db key)
+    (let ((kbuf (sb-ext:string-to-octets key :external-format :utf-8)))
+      (remove-value db kbuf (length kbuf)))))
+
 (defgeneric clear (db))
 
 (defgeneric count-record (db))

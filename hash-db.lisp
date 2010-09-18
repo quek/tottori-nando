@@ -430,7 +430,7 @@
 
 (defmethod set-chain ((db hash-db) entoff off)
   (with-slots (file_ head_ width_) db
-    (let ((buf (make-array 8 :element-type '(unsigned-byte 8))))
+    (let ((buf (make-array width_ :element-type '(unsigned-byte 8))))
       (write-fixnum buf (ash off (- (head-apow head_))) width_)
       (file-position file_ entoff)
       (write-sequence buf file_))))
@@ -502,7 +502,7 @@
         (when (<= rsiz (free-block-rsiz (car fbp_)))
           (return-from insert-free-block))
         (setf fbp_ (cdr fbp_)))
-      (push (make-free-block off rsiz) fbp_)
+      (push (make-free-block :off off :rsiz rsiz) fbp_)
       (setf fbp_ (sort fbp_ #'free-block<)))))
 
 (defmethod fetch-free-block ((db hash-db) rsiz res)
@@ -554,7 +554,7 @@
 
 (defmethod accept ((db hash-db) kbuf ksiz writable full empty)
   (with-slots (mlock_ head_ rlock_) db
-    (with-spin-rw-lock (mlock_ t)
+    (with-spin-rw-lock (mlock_ nil)
       (let* ((hash (hash-record db kbuf ksiz))
              (pivot (fold-hash db hash))
              (bidx (mod hash (head-bnum head_)))
@@ -581,7 +581,7 @@
                  (setf (record-off record) off)
                  (read-record db record rbuf)
                  (when (= (record-psiz record) #xffff)
-                   (error "free block in the chain"))
+                   (error "free block in the chain. ~a" record))
                  (let ((tpivot (if linear_
                                    pivot
                                    (fold-hash db
@@ -589,9 +589,11 @@
                                                            (record-kbuf record)
                                                            (record-ksiz record))))))
                    (cond ((> pivot tpivot)
+                          ;;(break "(> pivot tpivot) ~a ~a ~a" pivot tpivot record)
                           (setf off (record-left record)
                                 entoff (+ (record-off record) 2)))
                          ((< pivot tpivot)
+                          ;;(break "(< pivot tpivot) ~a ~a ~a" pivot tpivot record)
                           (setf off (record-right record)
                                 entoff (+ (record-off record) 2 width_)))
                          (t
@@ -794,5 +796,10 @@
            (setf (value db "baz") "jump")
            (assert (equal "hop" (print (value db "foo"))))
            (assert (equal "step" (print (value db "bar"))))
-           (assert (equal "jump" (print (value db "baz")))))
+           (assert (equal "jump" (print (value db "baz"))))
+           (setf (value db "bar") "ばー")
+           (assert (equal "ばー" (print (value db "bar"))))
+           (rem-value db "bar")
+           (assert (null (value db "bar")))
+           (setf (value db "aaa") "a"))
       (db-close db))))

@@ -137,7 +137,7 @@
 
 (declaim (inline read-fixnum))
 (defun read-fixnum (buffer width &optional (start 0))
-  (collect-byte (subseries (scan buffer) start width)))
+  (collect-byte (subseries (scan buffer) start (+ start width))))
 
 (defmacro n++ (var &optional (delta 1))
   `(prog1 ,var (incf ,var ,delta)))
