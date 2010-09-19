@@ -184,15 +184,30 @@
             (declare (ignore kb ks))
             (values vbuf vsiz))))
 
-;;(defmethod inc-op* ((db basic-db) kbuf ksiz delta)
-;;  (accept db kbuf ksiz t
-;;            (lambda (kb ks vb vs)
-;;              (declare (ignore kb ks))
-;;              (+ v delta))
-;;            (lambda (k)
-;;              (declare (ignore k))
-;;              delta))))
-;;
+(defmethod inc-op* ((db basic-db) kbuf ksiz delta vsiz)
+  (let (ret)
+    (accept db kbuf ksiz t
+            (lambda (kb ks vb vs)
+              (declare (ignore kb ks))
+              (loop repeat vs
+                    for i across vb
+                    for n = i then (+ (ash n 8) i)
+                    finally (let ((vbuf (make-array vsiz :element-type '(unsigned-byte 8))))
+                              (setf ret n)
+                              (iterate ((x (scan-byte (+ n delta) vsiz))
+                                        (i (scan-range)))
+                                (setf (aref vbuf i) x))
+                              (return (values vbuf vsiz)))))
+            (lambda (kb ks)
+              (declare (ignore kb ks))
+              (let ((vbuf (make-array vsiz :element-type '(unsigned-byte 8))))
+                (setf ret 0)
+                (iterate ((x (scan-byte delta vsiz))
+                          (i (scan-range)))
+                  (setf (aref vbuf i) x))
+                (values vbuf vsiz))))
+    ret))
+
 
 (defmethod cas-op* ((db basic-db) kbuf ksiz old-vbuf old-vsiz new-vbuf new-vsiz)
   (let (ok)
@@ -274,4 +289,8 @@
     (cas-op db "a" "ABC" "xyz")
     (assert (equal "xyz" (get-op db "a")))
     (assert (delete-op db "a"))
-    (assert (null (get-op db "a")))))
+    (assert (null (get-op db "a")))
+    ;;(set-op* db "inc" 3 #(1) 1)
+    ;;(assert (= 1 (print (inc-op db "inc" 2 1))))
+    ;;(assert (= 3 (inc-op db "inc" 0 1)))))
+    ))
