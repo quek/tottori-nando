@@ -25,12 +25,24 @@
                                           (buffer sequence)
                                           &optional (start 0) end)
   (with-slots (base-stream mmap-size sap position) stream
-    (let ((length (if end (- end start) (length buffer))))
-      (sb-sys::with-pinned-objects (sap buffer)
-        (sb-kernel::system-area-ub8-copy (sb-sys::vector-sap buffer) start
-                                         sap position
-                                         length))
-      (incf position length)
+    (let* ((length (if end (- end start) (length buffer))))
+      (cond ((< (+ position length) mmap-size)
+             (sb-sys::with-pinned-objects (sap buffer)
+               (sb-kernel::system-area-ub8-copy (sb-sys::vector-sap buffer) start
+                                                sap position
+                                                length)))
+            ((<= mmap-size position)
+             (file-position base-stream position)
+             (write-sequence buffer base-stream))
+            (t
+             (let ((mlen (- mmap-size position)))
+               (sb-sys::with-pinned-objects (sap buffer)
+                 (sb-kernel::system-area-ub8-copy (sb-sys::vector-sap buffer) start
+                                                  sap position
+                                                  mlen))
+               (file-position base-stream (1- mmap-size))
+               (write-sequence buffer base-stream :start (1- mlen) :end end))))
+      (setf position (+ position length))
       buffer)))
 
 (defmethod sb-gray:stream-read-sequence ((stream db-stream)
@@ -39,10 +51,22 @@
   (with-slots (base-stream mmap-size sap position) stream
     (unless end (setf end (length buffer)))
     (let ((length (- end start)))
-      (sb-sys::with-pinned-objects (sap buffer)
-        (sb-kernel::system-area-ub8-copy sap position
-                                         (sb-sys::vector-sap buffer) start
-                                         length))
+      (cond ((< (+ position length) mmap-size)
+             (sb-sys::with-pinned-objects (sap buffer)
+               (sb-kernel::system-area-ub8-copy sap position
+                                                (sb-sys::vector-sap buffer) start
+                                                length)))
+            ((<= mmap-size position)
+             (file-position base-stream position)
+             (read-sequence buffer base-stream))
+            (t
+             (let ((mlen (- mmap-size position)))
+               (sb-sys::with-pinned-objects (sap buffer)
+                 (sb-kernel::system-area-ub8-copy sap position
+                                                  (sb-sys::vector-sap buffer) start
+                                                  mlen))
+               (file-position base-stream (1- mmap-size))
+               (read-sequence buffer base-stream :start (1- mlen) :end end))))
       (incf position length)
       end)))
 
@@ -70,31 +94,34 @@
     (prog1 (sb-sys:sap-ref-8 sap position)
       (incf position))))
 
-
 (defmethod stream-truncate ((stream db-stream) size)
   (with-slots (base-stream) stream
     (sb-posix:ftruncate base-stream size)))
 
 #|
-(setf f (open "/tmp/a.txt" :direction :io :element-type '(unsigned-byte 8)
-              :if-exists :overwrite :if-does-not-exist :create))
-(setf m (make-instance 'db-stream :base-stream f :mmap-size 100))
-(slot-value m 'sap)
-;; => #.(SB-SYS:INT-SAP #X7FFFF7FF1000)
-(stream-truncate m 10)
-(sb-sys:sap-ref-8 (slot-value m 'sap) 0)
-(setf (sb-sys:sap-ref-8 (slot-value m 'sap) 0) 99)
-(progn
-  (file-position m 0)
-  (write-sequence (string-to-octets "!@#") m))
-(sb-gray:stream-write-sequence m (string-to-octets "abc"))
-(let ((buffer (make-array 10 :element-type '(unsigned-byte 8))))
-  (file-position m 0)
-  (values (read-sequence buffer m) buffer))
-(progn
-  (file-position m 0)
-  (write-byte 26 m)
-  (file-position m 0)
-  (read-byte m))
-(close m)
+(let ((f (open "/tmp/a.txt" :direction :io :element-type '(unsigned-byte 8)
+               :if-exists :overwrite :if-does-not-exist :create)))
+  (with-open-stream (m (make-instance 'db-stream :base-stream f :mmap-size 5))
+    (stream-truncate m 7)
+    (progn
+      (file-position m 1)
+      (write-byte (char-code #\B) m)
+      (file-position m 1)
+      (assert (= (char-code #\B) (read-byte m))))
+    (let ((buffer (make-array 3 :element-type '(unsigned-byte 8))))
+      (file-position m 0)
+      (write-sequence (string-to-octets "abc") m)
+      (file-position m 0)
+      (read-sequence buffer m)
+      (assert (equalp (string-to-octets "abc") buffer) (buffer) "1 ~a" buffer))
+    (let ((buffer (make-array 3 :element-type '(unsigned-byte 8))))
+      (write-sequence (string-to-octets "def") m)
+      (file-position m 3)
+      (read-sequence buffer m)
+      (assert (equalp (string-to-octets "def") buffer) (buffer) "2 ~a" buffer))
+    (let ((buffer (make-array 3 :element-type '(unsigned-byte 8))))
+      (write-sequence (string-to-octets "ghi") m)
+      (file-position m 6)
+      (read-sequence buffer m)
+      (assert (equalp (string-to-octets "ghi") buffer) (buffer) "3 ~a" buffer))))
 |#
