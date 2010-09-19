@@ -536,13 +536,14 @@
   (with-slots (mlock_ file_ path_ head_ roff_) db
     (with-spin-rw-lock (mlock_ t)
       (setf file_ (open path :direction :io :element-type '(unsigned-byte 8)
-                        :if-exists :overwrite :if-does-not-exist :create))
+                        :if-exists :overwrite :if-does-not-exist :create)
+            file_ (make-instance 'db-stream :base-stream file_ :mmap-size +hdbdefmsiz+))
       ;; TODO ここでリカバリー処理が走る。
-      (when (< (file-length file_) 1)
+      (when (zerop (stream-length file_))
         (calc-meta db)
         (setf (head-chksum head_) (calc-checksum db))
         (setf (atomic-int-value (head-lsiz head_)) roff_)
-        (sb-posix:ftruncate file_ (atomic-int-value (head-lsiz head_)))
+        (stream-truncate file_ (atomic-int-value (head-lsiz head_)))
         (dump-meta db))
       (load-meta db)
       (calc-meta db)
@@ -761,14 +762,16 @@
           (accept-impl-empty db kbuf ksiz empty bidx entoff record))))
 
 (defmethod synchronize-meta ((db hash-db))
-  (with-slots (flock_ file_) db
-    (sb-thread::with-spinlock (flock_)
-      (let ((err nil))
-        (unless (dump-meta db)
-          (setf err t))
-        (unless (synchronize file_ t)
-          (setf err t))
-        (not err)))))
+  ;; TODO
+  ;;(with-slots (flock_ file_) db
+  ;;  (sb-thread::with-spinlock (flock_)
+  ;;    (let ((err nil))
+  ;;      (unless (dump-meta db)
+  ;;        (setf err t))
+  ;;      (unless (synchronize file_ t)
+  ;;        (setf err t))
+  ;;      (not err)))))
+  )
 
 (defmethod begin-auto-transaction ((db hash-db))
   )

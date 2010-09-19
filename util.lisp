@@ -41,7 +41,8 @@
                             sum (case slot-size
                                   (:array array-size)
                                   (:atomic-int 8)
-                                  (t slot-size)))))
+                                  (t slot-size))))
+          (idx -1))
       `(progn
          (defstruct ,name
            ,@(loop for (slot-name slot-init-val slot-size array-size) in slots
@@ -72,27 +73,25 @@
                               (collect-byte (scan (subseq ,buffer ,offset
                                                           ,(incf offset slot-size))))))))))
          (defun ,(sym "WRITE-" name) (,name ,stream)
-           (let ((,buffer (make-array ,total-size :element-type '(unsigned-byte 8)
-                                      :fill-pointer 0)))
+           (let ((,buffer (make-array ,total-size :element-type '(unsigned-byte 8))))
              ,@(loop for (slot-name slot-init-val slot-size array-size) in slots
                      collect
                   (case slot-size
                     (:array
                        `(progn
                           ,@(loop for i from 0 below array-size
-                                  collect `(vector-push-extend
-                                            (aref (,(sym name "-" slot-name) ,name) ,i)
-                                                  ,buffer))))
+                                  collect `(setf (aref ,buffer ,(incf idx))
+                                                 (aref (,(sym name "-" slot-name) ,name) ,i)))))
                     (:atomic-int
-                       `(vector-push-byte-extend
-                         ,buffer
-                         (atomic-int-value (,(sym name "-" slot-name) ,name))
-                         8))
+                       `(let ((val (atomic-int-value (,(sym name "-" slot-name) ,name))))
+                          (setf ,@(loop for i from 56 downto 0 by 8
+                                        append `((aref ,buffer ,(incf idx))
+                                                 (ldb (byte 8  ,i) val))))))
                     (t
-                       `(vector-push-byte-extend
-                         ,buffer
-                         (,(sym name "-" slot-name) ,name)
-                         ,slot-size))))
+                       `(let ((val (,(sym name "-" slot-name) ,name)))
+                          (setf ,@(loop for i from (* 8 (1- slot-size)) downto 0 by 8
+                                        append `((aref ,buffer ,(incf idx))
+                                                 (ldb (byte 8  ,i) val))))))))
              (write-sequence ,buffer ,stream)))))))
 
 
