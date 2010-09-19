@@ -142,6 +142,13 @@
 (defmacro n++ (var &optional (delta 1))
   `(prog1 ,var (incf ,var ,delta)))
 
+
+(defun string-to-octets (string)
+  (sb-ext:string-to-octets string :external-format :utf-8))
+
+(defun octets-to-string (octets &key end)
+  (sb-ext:octets-to-string octets :external-format :utf-8 :end end))
+
 (declaim (inline hash-murmur))
 (defun hash-murmur (buf size)
   (declare (type (simple-array (unsigned-byte 8) (*)) buf)

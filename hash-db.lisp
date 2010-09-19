@@ -787,19 +787,20 @@
       (close file_))))
 
 (defun test-hash-db ()
-  (let ((db (make-instance 'hash-db)))
-    (db-open db "/tmp/foo")
-    (unwind-protect
-         (progn
-           (setf (value db "foo") "hop")
-           (setf (value db "bar") "step")
-           (setf (value db "baz") "jump")
-           (assert (equal "hop" (print (value db "foo"))))
-           (assert (equal "step" (print (value db "bar"))))
-           (assert (equal "jump" (print (value db "baz"))))
-           (setf (value db "bar") "ばー")
-           (assert (equal "ばー" (print (value db "bar"))))
-           (rem-value db "bar")
-           (assert (null (value db "bar")))
-           (setf (value db "aaa") "a"))
-      (db-close db))))
+  (time
+   (let ((db (make-instance 'hash-db)))
+     (db-open db "/tmp/foo")
+     (unwind-protect
+          (progn
+            (setf (value db "foo") "hop")
+            (setf (value db "bar") "step")
+            (setf (value db "baz") "jump")
+            (assert (equal "hop" (print (value db "foo"))))
+            (assert (equal "step" (print (value db "bar"))))
+            (assert (equal "jump" (print (value db "baz"))))
+            (setf (value db "bar") "ばー")
+            (assert (equal "ばー" (print (value db "bar"))))
+            (delete-op db "bar")
+            (assert (null (value db "bar")))
+            (setf (value db "aaa") "a"))
+       (db-close db)))))

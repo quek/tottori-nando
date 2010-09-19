@@ -10,39 +10,73 @@
 
 (defgeneric accept (db kbuf ksiz writable full empty))
 
-(defgeneric get-value (db kbuf ksiz))
+(defgeneric get-op* (db kbuf ksiz))
 
-(defgeneric value (db key)
-  (:method (db key)
-    (let ((kbuf (sb-ext:string-to-octets key :external-format :utf-8)))
-      (multiple-value-bind (vbuf vsiz) (get-value db kbuf (length kbuf))
-        (when vbuf
-          (sb-ext:octets-to-string vbuf :end vsiz :external-format :utf-8))))))
+(defun get-op (db key)
+  (let ((kbuf (string-to-octets key)))
+    (multiple-value-bind (vbuf vsiz) (get-op* db kbuf (length kbuf))
+      (when vbuf
+        (octets-to-string vbuf :end vsiz)))))
 
-(defgeneric set-value (db kbuf ksiz vbuf vsiz))
+(declaim (inline value))
+(defun value (db key)
+  (get-op db key))
 
-(defgeneric (setf value) (value db key)
-  (:method (value db key)
-    (let ((kbuf (sb-ext:string-to-octets key :external-format :utf-8))
-          (vbuf (sb-ext:string-to-octets value :external-format :utf-8)))
-      (set-value db kbuf (length kbuf) vbuf (length vbuf)))))
+(defgeneric set-op* (db kbuf ksiz vbuf vsiz))
 
-(defgeneric add-value (db kbuf ksiz vbuf vsiz))
+(defun set-op (db key value)
+  (let ((kbuf (string-to-octets key))
+        (vbuf (string-to-octets value)))
+    (set-op* db kbuf (length kbuf) vbuf (length vbuf))))
 
-(defgeneric replace-value (db kbuf ksiz vbuf vsiz))
+(declaim (inline value))
+(defun (setf value) (value db key)
+  (set-op db key value))
 
-(defgeneric append-value (db kbuf ksiz kvbuf ksiz))
 
-(defgeneric increment (db kbuf ksiz delta))
+(defgeneric add-op* (db kbuf ksiz vbuf vsiz))
 
-(defgeneric cas (db kbuf ksiz old-vbuf old-vsiz new-vbuf new-vsiz))
+(defun add-op (db key value)
+  (let ((kbuf (string-to-octets key))
+        (vbuf (string-to-octets value)))
+    (add-op* db kbuf (length kbuf) vbuf (length vbuf))))
 
-(defgeneric remove-value (db kbuf ksiz))
+(defgeneric replace-op* (db kbuf ksiz vbuf vsiz))
 
-(defgeneric rem-value (db key)
-  (:method (db key)
-    (let ((kbuf (sb-ext:string-to-octets key :external-format :utf-8)))
-      (remove-value db kbuf (length kbuf)))))
+(defun replace-op (db key value)
+  (let ((kbuf (string-to-octets key))
+        (vbuf (string-to-octets value)))
+    (replace-op* db kbuf (length kbuf) vbuf (length vbuf))))
+
+(defgeneric append-op* (db kbuf ksiz kvbuf ksiz))
+
+(defun append-op (db key value)
+  (let ((kbuf (string-to-octets key))
+        (vbuf (string-to-octets value)))
+    (append-op* db kbuf (length kbuf) vbuf (length vbuf))))
+
+(defgeneric inc-op* (db kbuf ksiz delta vsiz))
+
+(defun inc-op (db key delta vsiz)
+  (let ((kbuf (string-to-octets key)))
+    (inc-op* db kbuf (length kbuf) delta vsiz)))
+
+(defgeneric cas-op* (db kbuf ksiz old-vbuf old-vsiz new-vbuf new-vsiz))
+
+(defun cas-op (db key old-value new-value)
+  (let ((kbuf (string-to-octets key))
+        (old-vbuf (string-to-octets old-value))
+        (new-vbuf (string-to-octets new-value)))
+    (cas-op* db
+             kbuf (length kbuf)
+             old-vbuf (length old-vbuf)
+             new-vbuf (length new-vbuf))))
+
+(defgeneric delete-op* (db kbuf ksiz))
+
+(defun delete-op (db key)
+  (let ((kbuf (string-to-octets key)))
+    (delete-op* db kbuf (length kbuf))))
 
 (defgeneric clear (db))
 
@@ -105,7 +139,7 @@
 (defmethod (setf cursor-value) (valeu (cursor basic-db-cursor) &optional step)
   step)
 
-(defmethod set-value ((db basic-db) kbuf ksiz vbuf vsiz)
+(defmethod set-op* ((db basic-db) kbuf ksiz vbuf vsiz)
   (accept db kbuf ksiz t
           (lambda (kb ks vb vs)
             (declare (ignore kb ks vb vs))
@@ -114,7 +148,7 @@
             (declare (ignore kb ks))
             (values vbuf vsiz))))
 
-(defmethod get-value ((db basic-db) kbuf ksiz)
+(defmethod get-op* ((db basic-db) kbuf ksiz)
   (let (vbuf vsiz)
     (accept db kbuf ksiz nil
             (lambda (kb ks vb vs)
@@ -124,14 +158,14 @@
             #'empty-nop)
     (values vbuf vsiz)))
 
-(defmethod add-value ((db basic-db) kbuf ksiz vbuf vsiz)
+(defmethod add-op* ((db basic-db) kbuf ksiz vbuf vsiz)
   (accept db kbuf ksiz t
           #'full-nop
           (lambda (kb ks)
             (declare (ignore kb ks))
             (values vbuf vsiz))))
 
-(defmethod replace-value ((db basic-db) kbuf ksiz vbuf vsiz)
+(defmethod replace-op* ((db basic-db) kbuf ksiz vbuf vsiz)
   (let (ok)
     (accept db kbuf ksiz t
             (lambda (kb ks vb vs)
@@ -141,7 +175,7 @@
             #'empty-nop)
     ok))
 
-(defmethod append-value ((db basic-db) kbuf ksiz vbuf vsiz)
+(defmethod append-op* ((db basic-db) kbuf ksiz vbuf vsiz)
   (accept db kbuf ksiz t
           (lambda (kb ks vb vs)
             (declare (ignore kb ks))
@@ -150,7 +184,7 @@
             (declare (ignore kb ks))
             (values vbuf vsiz))))
 
-;;(defmethod increment ((db basic-db) kbuf ksiz delta)
+;;(defmethod inc-op* ((db basic-db) kbuf ksiz delta)
 ;;  (accept db kbuf ksiz t
 ;;            (lambda (kb ks vb vs)
 ;;              (declare (ignore kb ks))
@@ -159,26 +193,29 @@
 ;;              (declare (ignore k))
 ;;              delta))))
 ;;
-;;(defmethod cas ((db basic-db) key old-value new-value)
-;;  (let ((kbuf (sb-ext:string-to-octets key :external-format :utf-8)))
-;;    (accept db kbuf (length kbuf) t
-;;            (lambda (k v)
-;;              (declare (ignore k))
-;;              (if (equal v old-value)
-;;                  new-value
-;;                  :nop))
-;;            (lambda (k)
-;;              (declare (ignore k))
-;;              (when (null old-value)
-;;                new-value)))))
 
-(defmethod remove-value ((db basic-db) kbuf ksiz)
+(defmethod cas-op* ((db basic-db) kbuf ksiz old-vbuf old-vsiz new-vbuf new-vsiz)
   (let (ok)
     (accept db kbuf ksiz t
             (lambda (kb ks vb vs)
-              (declare (ignore kb ks vb vs))
+              (declare (ignore kb ks))
+              (if (and (= vs old-vsiz) (equalp vb old-vbuf))
+                  (progn
+                    (setf ok t)
+                    (values new-vbuf new-vsiz))
+                  :nop))
+            (lambda (kb ks)
+              (declare (ignore kb ks))
+              :nop))
+    ok))
+
+(defmethod delete-op* ((db basic-db) kbuf ksiz)
+  (let (ok)
+    (accept db kbuf ksiz t
+            (lambda (kb ks vb vs)
+              (declare (ignore kb ks vb))
               (setf ok t)
-              :remove)
+              (values :remove vs))
             #'empty-nop)
     ok))
 
@@ -232,9 +269,9 @@
 
 (defun test-proto-db ()
   (let ((db (make-instance 'proto-db)))
-    (set-value db "a" 1 "ABC" 3)
-    (assert (equal "ABC" (get-value db "a" 1)))
-    ;;(cas db "a" "ABC" "xyz")
-    ;;(assert (equal "xyz" (get-value db "a" 1)))
-    (assert (remove-value db "a" 1))
-    (assert (null (get-value db "a" 1)))))
+    (set-op db "a" "ABC")
+    (assert (equal "ABC" (get-op db "a")))
+    (cas-op db "a" "ABC" "xyz")
+    (assert (equal "xyz" (get-op db "a")))
+    (assert (delete-op db "a"))
+    (assert (null (get-op db "a")))))
