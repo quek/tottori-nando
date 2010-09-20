@@ -13,12 +13,13 @@
           (progn ,@body)
        (db-close db))))
 
-(time
- (with-db (db "/tmp/tottori-nando-example")
-   (let ((data (loop for i from 1 to 10000
-                     collect (list (format nil "key~a" i)
-                                   (format nil "value~a" i)))))
-     (loop for (k v) in data
+(defun example1 ()
+  (time
+   (with-db (db "/tmp/tottori-nando-example")
+     (loop for i from 1 to 10000000
+           for k = (format nil "key~a" i)
+           for v = (format nil "value~a" i)
+           if (zerop (mod i 10000))
+             do (format t "~&~d" i)
            do (setf (value db k) v)
            do (assert (equal v (value db k)))))))
-

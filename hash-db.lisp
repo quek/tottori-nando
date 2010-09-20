@@ -138,14 +138,14 @@
 
 (defmethod set-bucket ((db hash-db) bidx off)
   (with-slots (file_ width_ boff_ head_) db
-    (let ((buf (make-array 8 :element-type '(unsigned-byte 8))))
+    (let ((buf (make-array width_ :element-type '(unsigned-byte 8))))
       (write-fixnum buf (ash off (- (head-apow head_))) width_)
       (file-position file_ (+ boff_ (* bidx width_)))
       (write-sequence buf file_))))
 
 (defmethod get-backet ((db hash-db) bucket-index)
   (with-slots (boff_ width_ file_ head_) db
-    (let ((buffer (make-array 8 :element-type '(unsigned-byte 8))))
+    (let ((buffer (make-array width_ :element-type '(unsigned-byte 8))))
       (file-position file_ (+ boff_ (* bucket-index width_)))
       (read-sequence buffer file_)
       (ash (read-fixnum buffer width_) (head-apow head_)))))
@@ -241,7 +241,7 @@
               ((zerop (aref buffer rp))
                (error "nullified region"))
               (t
-               (setf snum (collect-byte (subseries (scan buffer) rp 2)))))
+               (setf snum (collect-byte (subseries (scan 'vector buffer) rp 2)))))
         (incf rp 2)
         (decf rsiz 2)
         (setf (record-psiz record) snum
