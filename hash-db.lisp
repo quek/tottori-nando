@@ -533,11 +533,11 @@
 
 
 (defmethod db-open ((db hash-db) path)
-  (with-slots (mlock_ file_ path_ head_ roff_) db
+  (with-slots (mlock_ file_ path_ head_ roff_ msiz_) db
     (with-spin-rw-lock (mlock_ t)
       (setf file_ (open path :direction :io :element-type '(unsigned-byte 8)
                         :if-exists :overwrite :if-does-not-exist :create)
-            file_ (make-instance 'db-stream :base-stream file_ :mmap-size +hdbdefmsiz+))
+            file_ (make-instance 'db-stream :base-stream file_ :mmap-size msiz_ :ext 1.5))
       ;; TODO ここでリカバリー処理が走る。
       (when (zerop (stream-length file_))
         (calc-meta db)

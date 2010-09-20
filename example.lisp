@@ -16,7 +16,7 @@
 (defun example1 ()
   (time
    (with-db (db "/tmp/tottori-nando-example")
-     (loop for i from 1 to 10000000
+     (loop for i from 1 to 100000
            for k = (format nil "key~a" i)
            for v = (format nil "value~a" i)
            if (zerop (mod i 10000))

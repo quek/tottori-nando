@@ -5,7 +5,8 @@
   ((base-stream :initarg :base-stream)
    (mmap-size :initarg :mmap-size)
    (position :initform 0)
-   (sap)))
+   (sap)
+   (ext :initarg :ext :initform nil)))
 
 (defmethod initialize-instance :after ((stream db-stream) &key)
   (with-slots (base-stream mmap-size sap) stream
@@ -24,11 +25,16 @@
 (defmethod sb-gray:stream-write-sequence ((stream db-stream)
                                           (buffer sequence)
                                           &optional (start 0) end)
-  (with-slots (base-stream mmap-size sap position) stream
+  (with-slots (base-stream mmap-size sap position ext) stream
     (let* ((length (if end (- end start) (length buffer))))
       (flet ((ext ()
-               (when (< (file-length base-stream) (+ position length))
-                 (sb-posix:ftruncate base-stream (+ position length)))))
+               (let ((current-len (file-length base-stream))
+                     (new-len (+ position length)))
+                 (when (< current-len new-len)
+                   (sb-posix:ftruncate base-stream
+                                       (if ext
+                                           (min mmap-size (ceiling (* current-len ext)))
+                                           new-len))))))
         (cond ((< (+ position length) mmap-size)
                (ext)
                (sb-sys::with-pinned-objects (sap buffer)

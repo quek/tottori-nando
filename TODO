@@ -1,5 +1,4 @@
 transaction
-mmap
 cursor
 recovery
 dump
