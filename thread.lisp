@@ -1,9 +1,27 @@
 (in-package :tottori-nando)
 
+(defun make-spinlock ()
+  (cons nil nil))
+
+(defun lock-spinlock (spinlock)
+  (loop until (sb-ext:compare-and-swap (car spinlock) nil t)))
+
+(defun unlock-spinlock (spinlock)
+  (setf (car spinlock) nil))
+
+(defmacro with-spinlock ((spinlock) &body body)
+  (alexandria:once-only (spinlock)
+    `(progn
+       (lock-spinlock ,spinlock)
+       (unwind-protect
+            (progn ,@body)
+         (unlock-spinlock ,spinlock)))))
+
 (defclass spin-rw-lock ()
-  ((spinlock :initform (sb-thread::make-spinlock))
+  ((spinlock :initform (make-spinlock))
    (wc :initform 0)
    (rc :initform 0)))
+
 
 (defgeneric lock-writer (lock))
 (defgeneric lock-writer-try (lock))
@@ -16,7 +34,7 @@
 (defmethod lock-writer ((lock spin-rw-lock))
   (with-slots (spinlock wc rc) lock
     (loop
-      (sb-thread::with-spinlock (spinlock)
+      (with-spinlock (spinlock)
         (when (and (<= wc 0)
                    (<= rc 0))
           (incf wc)
@@ -25,7 +43,7 @@
 
 (defmethod lock-writer-try ((lock spin-rw-lock))
   (with-slots (spinlock wc rc) lock
-    (sb-thread::with-spinlock (spinlock)
+    (with-spinlock (spinlock)
       (when (and (<= wc 0)
                  (<= rc 0))
         (incf wc)))))
@@ -33,7 +51,7 @@
 (defmethod lock-reader ((lock spin-rw-lock))
   (with-slots (spinlock wc rc) lock
     (loop
-      (sb-thread::with-spinlock (spinlock)
+      (with-spinlock (spinlock)
         (when (<= wc 0)
           (incf rc)
           (return-from lock-reader)))
@@ -41,27 +59,27 @@
 
 (defmethod lock-reader-try ((lock spin-rw-lock))
   (with-slots (spinlock wc rc) lock
-    (sb-thread::with-spinlock (spinlock)
+    (with-spinlock (spinlock)
       (when (<= wc 0)
         (incf rc)))))
 
 (defmethod unlock ((lock spin-rw-lock))
   (with-slots (spinlock wc rc) lock
-    (sb-thread::with-spinlock (spinlock)
+    (with-spinlock (spinlock)
       (if (< 0 wc)
           (decf wc)
           (decf rc)))))
 
 (defmethod promote ((lock spin-rw-lock))
   (with-slots (spinlock wc rc) lock
-    (sb-thread::with-spinlock (spinlock)
+    (with-spinlock (spinlock)
       (when (<= rc 1)
         (decf rc)
         (incf wc)))))
 
 (defmethod demote ((lock spin-rw-lock))
   (with-slots (spinlock wc rc) lock
-    (sb-thread::with-spinlock (spinlock)
+    (with-spinlock (spinlock)
       (decf wc)
       (incf rc))))
 
@@ -134,27 +152,27 @@
 
 (defclass atomic-int ()
   ((%value :initform 0)
-   (lock :initform (sb-thread::make-spinlock) :reader atomic-int-lock)))
+   (lock :initform (make-spinlock) :reader atomic-int-lock)))
 
 (defmethod print-object ((self atomic-int) stream)
   (print-unreadable-object (self stream :type t :identity t)
     (format stream "~a" (slot-value self '%value))))
 
 (defmethod atomic-int-value ((self atomic-int))
-  (sb-thread::with-spinlock ((atomic-int-lock self))
+  (with-spinlock ((atomic-int-lock self))
     (slot-value self '%value)))
 
 (defmethod (setf atomic-int-value) (value (self atomic-int))
-  (sb-thread::with-spinlock ((atomic-int-lock self))
+  (with-spinlock ((atomic-int-lock self))
     (setf (slot-value self '%value) value)))
 
 (defmethod atomic-int-add ((self atomic-int) value)
-  (sb-thread::with-spinlock ((atomic-int-lock self))
+  (with-spinlock ((atomic-int-lock self))
     (prog1 (slot-value self '%value)
       (incf (slot-value self '%value) value))))
 
 (defmethod atomic-int-cas ((self atomic-int) old-value new-value)
-  (sb-thread::with-spinlock ((atomic-int-lock self))
+  (with-spinlock ((atomic-int-lock self))
     (when (= (slot-value self '%value) old-value)
       (setf (slot-value self '%value) new-value))))
 

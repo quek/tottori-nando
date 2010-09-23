@@ -1,3 +1,11 @@
+#|
+kcfile のトランザクションの実装は
+ファイルに変更前を書く。
+ファイル出力。
+コミットなならログ破棄。
+アボートならログをファイルに反映して元に戻す。
+なのかな。
+|#
 (in-package :tottori-nando)
 
 (defclass db-stream (sb-gray:fundamental-binary-input-stream

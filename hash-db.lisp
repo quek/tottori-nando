@@ -1,6 +1,7 @@
 (in-package :tottori-nando)
 
-(alexandria:define-constant +hdbmagicdata+ (sb-ext:string-to-octets "lisp")
+(alexandria:define-constant +hdbmagicdata+
+    (string-to-octets (format nil "KC~c~c" #\Newline #\Nul))
   :test #'equalp
   :documentation "magic data of the file")
 (alexandria:define-constant +hdbchksumseed+ (sb-ext:string-to-octets "__kyotocabinet__")
@@ -66,7 +67,7 @@
 (defclass hash-db (basic-db)
   ((mlock_ :initform (make-instance 'spin-rw-lock) :documentation "The method lock.")
    (rlock_ :initform (make-slotted-spin-rw-lock +hdbrlockslot+)  :documentation "The record locks.")
-   (flock_ :initform (sb-thread::make-spinlock) :documentation "The file lock.")
+   (flock_ :initform (make-spinlock) :documentation "The file lock.")
    (atlock_ :initform (sb-thread::make-mutex) :documentation "The auto transaction lock.")
    (error_ :initform nil :documentation "The last happened error.")
    (logger_ :initform nil :documentation "The internal logger.")
@@ -97,17 +98,17 @@
    ;;(lsiz_ :documentation "The logical size of the file.")
    (psiz_ :initform (make-instance 'atomic-int) :documentation "The physical size of the file.")
    ;;(opaque_ :documentation "The opaque data.")
-   (msiz_ :initform +hdbdefmsiz+ :documentation "The size of the internal memory-mapped region.")
-   (dfunit_ :initform 0 :documentation "The unit step number of auto defragmentation.")
+   (msiz_ :initform +hdbdefmsiz+ :type fixnum :documentation "The size of the internal memory-mapped region.")
+   (dfunit_ :initform 0 :type fixnum :documentation "The unit step number of auto defragmentation.")
    (embcomp_ :initform nil :documentation "The embedded data compressor.")
-   (align_ :initform 0 :documentation "The alignment of records.")
-   (fbpnum_ :initform 0 :documentation "The number of elements of the free block pool.")
-   (width_ :initform 0 :documentation "The width of record addressing.")
+   (align_ :initform 0 :type fixnum :documentation "The alignment of records.")
+   (fbpnum_ :initform 0 :type fixnum :documentation "The number of elements of the free block pool.")
+   (width_ :initform 0 :type fixnum :documentation "The width of record addressing.")
    (linear_ :initform nil :documentation "The flag for linear collision chaining.")
    (comp_ :initform nil :documentation "The data compressor.")
-   (rhsiz_ :initform 0 :documentation "The header size of a record.")
-   (boff_ :initform 0 :documentation "The offset of the buckets section.")
-   (roff_ :initform 0 :documentation "The offset of the record section.")
+   (rhsiz_ :initform 0 :type fixnum :documentation "The header size of a record.")
+   (boff_ :initform 0 :type fixnum :documentation "The offset of the buckets section.")
+   (roff_ :initform 0 :type fixnum :documentation "The offset of the record section.")
    (dfcur_ :initform 0 :documentation "The defrag cursor.")
    (frgcnt_ :initform (make-instance 'atomic-int) :documentation "The count of fragmentation.")
    (tran_ :initform nil :documentation "The flag whether in transaction.")
@@ -117,7 +118,8 @@
 (defmethod print-object ((db hash-db) stream)
   (print-unreadable-object (db stream)
     (format stream "~a"
-            (loop for i in '(head_ psiz_ msiz_ dfunit_ fbpnum_ rhsiz_ boff_ roff_ dfcur_ frgcnt_ trfbp_)
+            (loop for i in '(head_ psiz_ msiz_ dfunit_ fbpnum_ rhsiz_ boff_
+                             roff_ dfcur_ frgcnt_ trfbp_)
                   collect (cons i (slot-value db i))))))
 
 
@@ -125,6 +127,7 @@
   (hash-murmur buffer size))
 
 (defmethod fold-hash ((db hash-db) hash)
+  (declare (type (unsigned-byte 64) hash))
   (logxor (logior (ash (logand hash #xffff000000000000) -48)
                   (ash (logand hash #x0000ffff00000000) -16))
           (logior (ash (logand hash #x000000000000ffff) 16)
@@ -132,6 +135,8 @@
 
 
 (defmethod compare-keys ((db hash-db) abuf asiz bbuf bsiz)
+  (declare (type (simple-array (unsigned-byte 8) (*)) abuf bbuf)
+           (type fixnum asiz bsiz))
   (if (/= asiz bsiz)
       (- asiz bsiz)
       (and (every #'= abuf bbuf) 0)))
@@ -494,7 +499,7 @@
 
 (defmethod insert-free-block ((db hash-db) off rsiz)
   (with-slots (flock_ fbp_ fbpnum_) db
-    (sb-thread::with-spinlock (flock_)
+    (with-spinlock (flock_)
       ;; TODO (escape-cursors off (+ off rsiz))
       (when (< fbpnum_ 1)
         (return-from insert-free-block))
@@ -509,7 +514,7 @@
   (with-slots (fbp_ fbpnum_ flock_) db
     (when (< fbpnum_ 1)
       (return-from fetch-free-block nil))
-    (sb-thread::with-spinlock (flock_)
+    (with-spinlock (flock_)
       (let ((fb (make-free-block :off #xffff :rsiz rsiz)))
         (loop for i in fbp_
               if (free-block< fb i)
@@ -764,7 +769,7 @@
 (defmethod synchronize-meta ((db hash-db))
   ;; TODO
   ;;(with-slots (flock_ file_) db
-  ;;  (sb-thread::with-spinlock (flock_)
+  ;;  (with-spinlock (flock_)
   ;;    (let ((err nil))
   ;;      (unless (dump-meta db)
   ;;        (setf err t))
