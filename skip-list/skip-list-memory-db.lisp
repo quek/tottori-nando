@@ -1,5 +1,14 @@
 (in-package :tottori-nando.skip-list-memory-db)
 
+(defun vector< (a b)
+  (loop for x across a
+        and y across b
+        if (< x y)
+          do (return-from vector< t)
+        if (< y x)
+          do (return-from vector< nil))
+  (< (length a) (length b)))
+
 (defstruct node
   (key nil)
   (val nil)
@@ -12,7 +21,7 @@
    (key< :initarg :key<)
    (mlock_ :initform (make-instance 'spin-rw-lock))))
 
-(defun make-skip-list (record-count &key (p 0.25) (key< #'string<))
+(defun make-skip-list (record-count &key (p 0.25) (key< #'vector<))
   (let ((list (make-instance 'skip-list :p p :key< key<)))
     (with-slots (p max-level head) list
       (setf max-level (ceiling (log record-count (/ 1 p)))
@@ -50,13 +59,14 @@
                            (when (= -1 (decf level))
                              ,return-nil)))
                      (t
+                      ,add-prevs
                       ,return-node)))
         else
           do #1#))
 
 (defun %skip-list-search (skip-list key)
   (declare (optimize (speed 3) (safety 0)))
-  (|skip-list-search'| (with prevs = (make-array max-level))
+  (|skip-list-search'| (with prevs = (make-array max-level :initial-element nil))
                        (setf (aref prevs level) node-1)
                        (return (values nil prevs))
                        (return (values node prevs))))
@@ -100,12 +110,22 @@
         (setf (node-val node) val)
         (%skip-list-add skip-list prevs key val))))
 
+;;     3     6
+;; 1   3   5 6
+;; 1 2 3 4 5 6
 (defun %skip-list-remove (node prevs)
   (loop for level from 0
         for prev across prevs
-        if (eq (aref (node-next prev) level) node)
-          do (setf (aref (node-next prev) level)
-                   (aref (node-next node) level))))
+        if prev
+          do (progn
+               (print (list level prev))
+               (loop for i from level downto 0
+                   do (print prev)
+                   do (loop until (eq node (aref (node-next prev) i))
+                            do (setf prev (aref (node-next prev) i))
+                            finally (setf (aref (node-next prev) i)
+                                          (aref (node-next node) i))))
+               (return t))))
 
 (defun skip-list-remove (skip-list key)
   (multiple-value-bind (node prevs) (%skip-list-search skip-list key)
@@ -114,7 +134,7 @@
       node)))
 
 (defclass skip-list-memory-db (basic-db)
-  ((mlcok_ :initform (make-instance 'spin-rw-lock))
+  ((mlock_ :initform (make-instance 'spin-rw-lock))
    (skip-list)
    (record-count :initargs :record-count :initform 100000)))
 
@@ -127,7 +147,7 @@
     (if writable
         ;; 更新系
         (with-spin-rw-lock (mlock_ t)
-          (multiple-value-bind (node prevs) (skip-list-search skip-list kbuf)
+          (multiple-value-bind (node prevs) (%skip-list-search skip-list kbuf)
             (if node
                 ;; 該当あり
                 (multiple-value-bind (vbuf vsiz) (funcall full kbuf ksiz
@@ -148,10 +168,10 @@
                   (case vbuf
                     ((:nop :remove) t)
                     (t
-                       (%skip-list-add skip-list prevs kbuf kbuf)))))))
+                       (%skip-list-add skip-list prevs kbuf vbuf)))))))
         ;; 参照系
         (with-spin-rw-lock (mlock_ nil)
-          (let ((node (skip-list-search skip-list kbuf)))
+          (let ((node (%skip-list-search skip-list kbuf)))
             (if node
                 (funcall full kbuf ksiz (node-val node) (length (node-val node)))
                 (funcall empty kbuf ksiz)))))))
@@ -159,23 +179,16 @@
 
 (defun test ()
   (let ((db (make-instance 'skip-list-memory-db)))
-    (setf (value db "foo") "hop"))
+    (setf (value db "foo") "hop")
+    (setf (value db "bar") "step")
+    (setf (value db "baz") "jump")
+    (assert (equal "hop" (print (value db "foo"))))
+    (assert (equal "step" (print (value db "bar"))))
+    (assert (equal "jump" (print (value db "baz"))))
+    (setf (value db "bar") "ばー")
+    (assert (equal "ばー" (print (value db "bar"))))
+    (delete-op db "bar")
+    (assert (null (value db "bar")))
+    (setf (value db "aaa") "a")
+    (value db "aaa"))
   )
-
-(defun test2 ()
-  (progn
-    (sb-profile:reset)
-    (sb-profile:profile skip-list-search skip-list-add compute-level-for-add)
-    (time
-     (let* ((record-count 100000)
-            (list (make-skip-list record-count :p 0.5))
-            (keys (sort (loop for i from 1 to record-count
-                              collect (format nil "key~d" i))
-                        (lambda (a b) (declare (ignore a b)) (zerop (random 2))))))
-       (print (list (slot-value list 'max-level)))
-       (loop for i in keys
-             do (skip-list-add list i i))
-       (loop for i in keys
-             do (assert (string= i (skip-list-search list i))))))
-    (sb-profile:report)
-    (sb-profile:unprofile)))
