@@ -18,11 +18,13 @@
                         :serial t
                         :components ((:file "package")
                                      (:file "hash-db")))
+               (:module "skip-list-memory"
+                        :serial t
+                        :components ((:file "package")
+                                     (:file "skip-list-memory-db")))
                (:module "skip-list"
                         :serial t
-                        :components ((:file "skip-list-memory-db-package")
-                                     (:file "skip-list-memory-db")
-                                     (:file "skip-list-db-package")
+                        :components ((:file "package")
                                      (:file "skip-list-db"))))
   :depends-on (:alexandria
                :anaphora
