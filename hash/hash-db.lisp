@@ -1,4 +1,4 @@
-(in-package :tottori-nando)
+(in-package :tottori-nando.hash)
 
 (alexandria:define-constant +hdbmagicdata+
     (string-to-octets (format nil "KC~c~c" #\Newline #\Nul))
@@ -41,6 +41,8 @@
 (alexandria:define-constant +hdbtmppathext+ "tmpkch"
   :test #'string=
   :documentation "extension of the temporary file")
+
+(defconstant +typehash+   #x30 "file hash database")
 
 
 (def-byte-struct head

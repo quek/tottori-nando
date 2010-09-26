@@ -1,4 +1,4 @@
-(in-package :tottori-nando)
+(in-package :tottori-nando.internal)
 
 (defun make-spinlock ()
   (cons nil nil))

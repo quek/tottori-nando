@@ -1,4 +1,4 @@
-(in-package :tottori-nando)
+(in-package :tottori-nando.internal)
 
 
 ;; (defun series-equal (a b &optional (test #'equal))

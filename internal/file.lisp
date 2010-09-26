@@ -6,7 +6,7 @@ kcfile のトランザクションの実装は
 アボートならログをファイルに反映して元に戻す。
 なのかな。
 |#
-(in-package :tottori-nando)
+(in-package :tottori-nando.internal)
 
 (defclass db-stream (sb-gray:fundamental-binary-input-stream
                      sb-gray:fundamental-binary-output-stream)
