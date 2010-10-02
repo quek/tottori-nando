@@ -47,39 +47,30 @@
                      (shiftf (fragment-size new-fragment) (heap-fragments heap) new-fragment))))))
 
 (defun dump-fragments (heap)
-  (let ((buffer (make-array (+ 8 8) :element-type 'octet))
-        (file (heap-file heap))
-        (heap-fragments (heap-fragments heap)))
-    (declare (dynamic-extent buffer))
-    (bytes-into buffer 0 (if heap-fragments
-                             (fragment-offset (heap-fragments heap))
-                             0) 8)
-    (file-position file (heap-fragments-offset heap))
-    (write-sequence buffer file :start 0 :end 8)
+  (let* ((sap (db-stream-sap (heap-file heap)))
+         (heap-fragments (heap-fragments heap)))
+    (setf (ref-64 sap (heap-fragments-offset heap))
+          (if heap-fragments
+              (fragment-offset (heap-fragments heap))
+              0))
     (loop for i = heap-fragments then (fragment-next i)
           while i
           for j = (fragment-next i)
           for next-offset = (if j (fragment-offset j) 0)
-          do (bytes-into buffer 0 (fragment-size i) 8)
-             (bytes-into buffer 8 next-offset 8)
-             (file-position file (fragment-offset i))
-             (write-sequence buffer file :start 0 :end 8))
+          do (setf (ref-64 sap (fragment-offset i))
+                   next-offset))
     heap))
 
 (defun load-fragments (heap)
-  (let ((buffer (make-array (+ 8 8) :element-type 'octet))
-        (file (heap-file heap)))
-    (file-position file (heap-fragments-offset heap))
-    (read-sequence buffer file :end 8)
-    (let ((fragments (loop for offset = (from-bytes buffer 0 8) then next
+  (let* ((sap (db-stream-sap (heap-file heap)))
+         (start (ref-64 sap (heap-fragments-offset heap))))
+    (let ((fragments (loop for offset = start then next
                            until (zerop offset)
-                           for next = (progn
-                                        (file-position file offset)
-                                        (read-sequence buffer file :end 16)
-                                        (from-bytes buffer 8 16))
+                           for next = (ref-64 sap offset)
                            collect (make-fragment :offset offset
-                                        :size (from-bytes buffer 0 8)))))
+                                        :size (ref-64 sap (- offset 8))))))
       (setf (heap-fragments heap) (car fragments))
       (loop for i in fragments
             and j in (cdr fragments)
-            do (setf (fragment-next i) j)))))
+            do (setf (fragment-next i) j)))
+    heap))

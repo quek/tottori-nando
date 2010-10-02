@@ -13,12 +13,20 @@
 (defconstant +node-size+ (* 8 6))
 
 (defstruct node
+  (offset 0 :type fixnum)
   (key-start 0 :type fixnum)
   (key-end 0 :type fixnum)
   (value-start 0 :type fixnum)
   (value-end 0 :type fixnum)
   (next-start 0 :type fixnum)
   (next-end 0 :type fixnum))
+
+(defun save-node-value (node)
+  (let ((offset (node-offset node)))
+    (setf (ref-64 *sap* (+ offset 8 8))
+          (node-value-start node)
+          (ref-64 *sap* (+ offset 8 8 8))
+          (node-value-end node))))
 
 (defstruct free-block ()
   (offset 0 :type fixnum)
@@ -51,10 +59,8 @@
             (heap-fragments-offset heap) (ref-64 *sap* +fragments-offset+))
       (load-fragments heap)
       (let ((next-start (ref-64 *sap* +head-next-start-offset+)))
-        (print 'abababab)
         (if (zerop next-start)
             (let ((next-start (alloc heap (* 8 max-level))))
-              (print 'xoeuoeuoeu)
               (setf (node-next-start head) next-start
                     (node-next-end head) (+ next-start (* max-level))))
             (setf (node-next-start head) next-start
@@ -63,7 +69,8 @@
 (defun next-node (node level)
   (let ((offset (ref-64 *sap* (+ (node-next-start node) (* 8 level)))))
     (unless (zerop offset)
-      (make-node :key-start (ref-64 *sap* offset)
+      (make-node :offset offset
+                 :key-start (ref-64 *sap* offset)
                  :key-end (ref-64 *sap* (+ offset 8))
                  :value-start (ref-64 *sap* (+ offset 16))
                  :value-end (ref-64 *sap* (+ offset 24))
@@ -131,7 +138,8 @@
       (copy-vector-to-sap vbuf 0 *sap* value-start vsiz)
       (loop for i from next-start below next-end by 8
             do (setf (ref-64 *sap* i) 0))
-      (values (make-node :key-start key-start
+      (values (make-node :offset node-offset
+                         :key-start key-start
                          :key-end key-end
                          :value-start value-start
                          :value-end value-end
@@ -155,7 +163,8 @@
                           *sap* value-offset
                           vsiz)
       (setf (node-value-start node) value-offset
-            (node-value-end node) (+ value-offset 8 vsiz)))))
+            (node-value-end node) (+ value-offset vsiz))
+      (save-node-value node))))
 
 (defmethod accept ((db skip-list-db) kbuf ksiz writable full empty)
   (with-slots (head stream) db
