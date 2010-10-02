@@ -17,8 +17,23 @@
            #:atomic-int-secure-least
 
            #:db-stream
+           #:db-stream-sap
            #:stream-truncate
            #:stream-length
+           #:read-seq-at
+           #:write-seq-at
+
+           #:heap
+           #:make-heap
+           #:heap-offset
+           #:heap-sile
+           #:heap-fragments-offset
+           #:heap-fragments
+           #:heap-file
+           #:alloc
+           #:free
+           #:dump-fragments
+           #:load-fragments
 
            #:n++
            #:scan-byte
@@ -31,8 +46,20 @@
            #:write-fixnum
            #:read-fixnum
            #:hash-murmur
+           #:copy-sap-to-sap
+           #:copy-sap-to-vector
+           #:copy-vector-to-sap
            #:string-to-octets
            #:octets-to-string
+           #:make-buffer
+           #:bytes-into
+           #:from-bytes
+           #:ref-8
+           #:ref-16
+           #:ref-32
+           #:ref-64
+           #:gref
+
            #:+formatver+
            #:+librev+
            #:+libver+

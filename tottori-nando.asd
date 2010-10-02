@@ -5,11 +5,12 @@
   :components ((:module "internal"
                         :serial t
                         :components ((:file "package")
+                                     (:file "type")
                                      (:file "util")
                                      (:file "api")
-                                     (:file "internal")
                                      (:file "thread")
                                      (:file "file")
+                                     (:file "heap")
                                      (:file "basic-db")))
                (:module "api"
                         :serial t

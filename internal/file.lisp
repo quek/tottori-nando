@@ -13,7 +13,7 @@ kcfile のトランザクションの実装は
   ((base-stream :initarg :base-stream)
    (mmap-size :initarg :mmap-size)
    (position :initform 0)
-   (sap)
+   (sap :reader db-stream-sap)
    (ext :initarg :ext :initform nil)))
 
 (defmethod initialize-instance :after ((stream db-stream) &key)
@@ -30,6 +30,14 @@ kcfile のトランザクションの実装は
     (sb-posix:munmap sap mmap-size)
     (close base-stream :abort abort)))
 
+(defmethod read-seq-at (stream sequence position &key (start 0) end)
+  (file-position stream position)
+  (read-sequence sequence stream :start start :end end))
+
+(defmethod write-seq-at (stream sequence position &key (start 0) end)
+  (file-position stream position)
+  (write-sequence sequence stream :start start :end end))
+
 (defmethod sb-gray:stream-write-sequence ((stream db-stream)
                                           (buffer sequence)
                                           &optional (start 0) end)
@@ -45,20 +53,14 @@ kcfile のトランザクションの実装は
                                            new-len))))))
         (cond ((< (+ position length) mmap-size)
                (ext)
-               (sb-sys::with-pinned-objects (sap buffer)
-                 (sb-kernel::system-area-ub8-copy (sb-sys::vector-sap buffer) start
-                                                  sap position
-                                                  length)))
+               (copy-vector-to-sap buffer start sap psition length))
               ((<= mmap-size position)
                (file-position base-stream position)
                (write-sequence buffer base-stream))
               (t
                (ext)
                (let ((mlen (- mmap-size position)))
-                 (sb-sys::with-pinned-objects (sap buffer)
-                   (sb-kernel::system-area-ub8-copy (sb-sys::vector-sap buffer) start
-                                                    sap position
-                                                    mlen))
+                 (copy-vector-to-sap buffer start sap position mlen)
                  (file-position base-stream (1- mmap-size))
                  (write-sequence buffer base-stream :start (1- mlen) :end end))))
         (setf position (+ position length))
@@ -71,19 +73,13 @@ kcfile のトランザクションの実装は
     (unless end (setf end (length buffer)))
     (let ((length (- end start)))
       (cond ((< (+ position length) mmap-size)
-             (sb-sys::with-pinned-objects (sap buffer)
-               (sb-kernel::system-area-ub8-copy sap position
-                                                (sb-sys::vector-sap buffer) start
-                                                length)))
+             (copy-sap-to-vector sap position buffer start length))
             ((<= mmap-size position)
              (file-position base-stream position)
              (read-sequence buffer base-stream))
             (t
              (let ((mlen (- mmap-size position)))
-               (sb-sys::with-pinned-objects (sap buffer)
-                 (sb-kernel::system-area-ub8-copy sap position
-                                                  (sb-sys::vector-sap buffer) start
-                                                  mlen))
+               (copy-sap-to-vector sap position buffer start mlen)
                (file-position base-stream (1- mmap-size))
                (read-sequence buffer base-stream :start (1- mlen) :end end))))
       (incf position length)

@@ -141,6 +141,63 @@
 (defmacro n++ (var &optional (delta 1))
   `(prog1 ,var (incf ,var ,delta)))
 
+(defmacro bytes-into (buffer p num size)
+  (if (numberp size)
+      (alexandria:once-only (num)
+        `(setf ,@(loop for i from (* 8 (1- size)) downto 0 by 8
+                       for n from 0
+                       append `((aref ,buffer ,(if (numberp p) (+ p n) `(incf ,p)))
+                                (ldb (byte 8 ,i) ,num)))))
+      (alexandria:with-gensyms (i n)
+        `(loop for ,i from (* 8 (1- ,size)) downto 0 by 8
+               ,@(when (numberp p) `(for ,n from 0))
+               do (setf (aref ,buffer ,(if (numberp p) `(+ p ,n) `(incf ,p)))
+                        (ldb (byte 8 ,i) ,num))))))
+
+(defmacro from-bytes (buffer start end)
+  `(loop for i from ,start below ,end
+         for n = (aref ,buffer i) then (+ (ash n 8) (aref ,buffer i))
+         finally (return n)))
+
+(defun make-buffer (size)
+  (make-array size :element-type '(unsigned-byte 8)))
+
+(macrolet ((def-refs ()
+               `(progn
+                  ,@(loop for (x y) in '((ref-8 sb-sys:sap-ref-8)
+                                         (ref-16 sb-sys:sap-ref-16)
+                                         (ref-32 sb-sys:sap-ref-32)
+                                         (ref-64 sb-sys:sap-ref-64))
+                          collect `(defun ,x (sap offset)
+                                     (,y sap offset))
+                          collect `(defun (setf ,x) (value sap offset)
+                                     (setf (,y sap offset) value))))))
+  (def-refs))
+
+(defun gref (x index)
+  (typecase x
+    (sb-sys:system-area-pointer
+       (ref-8 x index))
+    (t
+       (aref x index))))
+
+(defun copy-sap-to-vector (sap sap-start vector vector-start length)
+  (sb-sys::with-pinned-objects (sap vector)
+    (sb-kernel::system-area-ub8-copy sap sap-start
+                                     (sb-sys::vector-sap vector) vector-start
+                                     length)))
+
+(defun copy-vector-to-sap (vector vector-start sap sap-start length)
+  (sb-sys::with-pinned-objects (vector sap)
+    (sb-kernel::system-area-ub8-copy (sb-sys::vector-sap vector) vector-start
+                                     sap sap-start
+                                     length)))
+
+(defun copy-sap-to-sap (sap-src sap-src-start sap-dest sap-dest-start length)
+  (sb-sys::with-pinned-objects (sap-src sap-dest)
+    (sb-kernel::system-area-ub8-copy sap-src sap-src-start
+                                     sap-dest sap-dest-start
+                                     length)))
 
 (defun string-to-octets (string)
   (sb-ext:string-to-octets string :external-format :utf-8))
