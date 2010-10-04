@@ -25,8 +25,8 @@
 
            #:heap
            #:make-heap
-           #:heap-offset
-           #:heap-sile
+           #:heap-start
+           #:heap-end
            #:heap-fragments-offset
            #:heap-fragments
            #:heap-file
