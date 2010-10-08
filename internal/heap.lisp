@@ -35,26 +35,38 @@
                  (setf (fragment-next prev) (fragment-next x))
                  (setf (heap-fragments heap) (fragment-next x)))
              (return-from alloc (fragment-offset x)))
-  (fragment-offset (%alloc heap size)))
+  (values (fragment-offset (%alloc heap size))
+          heap))
 
 (defun free (heap offset)
   (with-slots (file) heap
-    (let ((size (ref-64 (db-stream-sap file) (- offset 8))))
+    (let* ((sap (db-stream-sap file))
+           (size (- (ref-64 sap (- offset 8)) 8)))
+      ;;(break "~a ~a ~a" heap offset size)
+      (loop for i from offset
+            repeat size
+            do (setf (ref-8 sap i) #xff))
       (loop with new-fragment = (make-fragment :offset offset :size size)
             for x = (heap-fragments heap) then (fragment-next x)
             and prev = nil then x
-            while x
-            if (< (fragment-size x) size)
+            unless x
+              do (if prev
+                     (setf (fragment-next prev) new-fragment)
+                     (setf (heap-fragments heap) new-fragment))
+                 (return)
+            if (< size (fragment-size x))
               do (if prev
                      (shiftf (fragment-next new-fragment) (fragment-next prev) new-fragment)
-                     (shiftf (fragment-next new-fragment) (heap-fragments heap) new-fragment))))))
+                     (shiftf (fragment-next new-fragment) (heap-fragments heap) new-fragment))
+                 (return))))
+  heap)
 
 (defun dump-fragments (heap)
   (let* ((sap (db-stream-sap (heap-file heap)))
          (heap-fragments (heap-fragments heap)))
-    (setf (ref-64 sap (heap-fragments-offset heap))
+    (setf (heap-fragments-offset heap)
           (if heap-fragments
-              (fragment-offset (heap-fragments heap))
+              (fragment-offset heap-fragments)
               0))
     (loop for i = heap-fragments then (fragment-next i)
           while i

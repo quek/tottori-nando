@@ -238,5 +238,6 @@
            ;;(delete-op db "bar")
            ;;(assert (null (value db "bar")))
            (setf (value db "aaa") "a")
+           (setf (value db "aaa") "aa")
            (value db "aaa"))
       (db-close db))))
