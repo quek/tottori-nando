@@ -124,7 +124,7 @@
                           (return (values nil prevs))))
                        (t
                         (setf (aref prevs level) node-1)
-                        (return (values node prevs)))))
+                        (return (values node prevs level node-1)))))
           else
             do (setf (aref prevs level) node-1)
                (when (= -1 (decf level))
@@ -189,20 +189,15 @@
       (save-node-value node)
       (free heap old))))
 
-(defun %skip-list-remove (skip-list-db node prevs)
+(defun %skip-list-remove (skip-list-db node level prev)
   (with-slots (heap max-level) skip-list-db
-    (loop for level from 0
-          for prev across prevs
-          if prev
-            do (print (list node prevs level prev))
-               (loop for i from level downto 0
-                     do (print (list i prev))
-                        (loop until (= (node-offset node) (node-offset (next-node prev i)))
-                              do (print prev)
-                                 (setf prev (next-node prev i))
-                              finally (setf (ref-64 *sap* (+ (node-next-start prev) (* 8 i)))
-                                            (ref-64 *sap* (+ (node-next-start node) (* 8 i))))))
-               (return node))
+    (loop for i from level downto 0
+          do (print (list i prev))
+             (loop until (= (node-offset node) (node-offset (next-node prev i)))
+                   do (print prev)
+                      (setf prev (next-node prev i))
+                   finally (setf (ref-64 *sap* (+ (node-next-start prev) (* 8 i)))
+                                 (ref-64 *sap* (+ (node-next-start node) (* 8 i))))))
     (free heap (node-offset node))))
 
 (defmethod accept ((db skip-list-db) kbuf ksiz writable full empty)
@@ -210,7 +205,7 @@
     (with-sap (stream)
       (if writable
           ;; 更新系
-          (multiple-value-bind (node prevs) (%skip-list-search db kbuf ksiz)
+          (multiple-value-bind (node prevs level prev) (%skip-list-search db kbuf ksiz)
             (if node
                 ;; 該当あり
                 (multiple-value-bind (vbuf vsiz) (funcall full kbuf ksiz
@@ -218,7 +213,7 @@
                   (case vbuf
                     (:remove
                        ;; 削除
-                       (%skip-list-remove db node prevs))
+                       (%skip-list-remove db node level prev))
                     (:nop t)
                     (t
                        ;; 置き換え（+nop+ ではない場合）
