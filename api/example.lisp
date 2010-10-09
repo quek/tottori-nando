@@ -43,7 +43,7 @@
 (defun example3 ()
   (time
    (let* ((n 100000)
-          (db (tottori-nando.skip-list-db:make-skip-list-db n)))
+          (db (make-skip-list-db n)))
      (db-open db "/tmp/skip-list.db")
      (unwind-protect
           (progn

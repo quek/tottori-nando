@@ -21,7 +21,9 @@
            #:cas-op
            #:cas-op*
            #:delete-op
-           #:delete-op*))
+           #:delete-op*
+
+           #:make-skip-list-db))
 
 (series::install :pkg :tottori-nando)
 
