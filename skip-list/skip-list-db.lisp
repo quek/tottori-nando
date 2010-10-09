@@ -41,7 +41,7 @@
    (head :initform (make-instance 'node))
    (heap :initform (make-heap))
    (stream :initform nil)
-   (mmap-size :initarg :mmap-size :initform (ash 1 20))))
+   (mmap-size :initarg :mmap-size :initform (ash 32 20))))
 
 (defun make-skip-list-db (record-count &key (p 0.25))
   (let ((db (make-instance 'skip-list-db :p p)))
@@ -189,6 +189,22 @@
       (save-node-value node)
       (free heap old))))
 
+(defun %skip-list-remove (skip-list-db node prevs)
+  (with-slots (heap max-level) skip-list-db
+    (loop for level from 0
+          for prev across prevs
+          if prev
+            do (print (list node prevs level prev))
+               (loop for i from level downto 0
+                     do (print (list i prev))
+                        (loop until (= (node-offset node) (node-offset (next-node prev i)))
+                              do (print prev)
+                                 (setf prev (next-node prev i))
+                              finally (setf (ref-64 *sap* (+ (node-next-start prev) (* 8 i)))
+                                            (ref-64 *sap* (+ (node-next-start node) (* 8 i))))))
+               (return node))
+    (free heap (node-offset node))))
+
 (defmethod accept ((db skip-list-db) kbuf ksiz writable full empty)
   (with-slots (head stream) db
     (with-sap (stream)
@@ -202,7 +218,7 @@
                   (case vbuf
                     (:remove
                        ;; 削除
-                       (%skip-list-remove node prevs))
+                       (%skip-list-remove db node prevs))
                     (:nop t)
                     (t
                        ;; 置き換え（+nop+ ではない場合）
@@ -235,8 +251,8 @@
            (assert (equal "jump" (print (value db "baz"))))
            (setf (value db "bar") "ばー")
            (assert (equal "ばー" (print (value db "bar"))))
-           ;;(delete-op db "bar")
-           ;;(assert (null (value db "bar")))
+           (delete-op db "bar")
+           (assert (null (value db "bar")))
            (setf (value db "aaa") "a")
            (setf (value db "aaa") "aa")
            (value db "aaa"))

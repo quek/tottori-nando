@@ -37,3 +37,22 @@
            for v = (format nil "new-value~a" i)
            do (setf (value db k) v)
            do (assert (equal v (value db k)))))))
+
+
+
+(defun example3 ()
+  (time
+   (let* ((n 100000)
+          (db (tottori-nando.skip-list-db:make-skip-list-db n)))
+     (db-open db "/tmp/skip-list.db")
+     (unwind-protect
+          (progn
+            (loop for i from 0 to n
+                  for x = (random n)
+                  for k = (format nil "key~a" x)
+                  for v = (format nil "value~a" x)
+                  if (zerop (mod i 10000))
+                    do (format t "~&~d" i)
+                  do (setf (value db k) v)
+                  do (assert (equal v (value db k)))))
+       (db-close db)))))
