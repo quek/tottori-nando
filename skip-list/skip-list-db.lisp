@@ -24,6 +24,10 @@
   (next-start 0 :type fixnum)
   (next-end 0 :type fixnum))
 
+(defun free-node (heap node)
+  (free heap (node-value-start node))
+  (free heap (node-offset node)))
+
 (defun save-node-value (node)
   (let ((offset (node-offset node)))
     (setf (ref-64 *sap* (+ offset 8 8))
@@ -192,13 +196,11 @@
 (defun %skip-list-remove (skip-list-db node level prev)
   (with-slots (heap max-level) skip-list-db
     (loop for i from level downto 0
-          do (print (list i prev))
-             (loop until (= (node-offset node) (node-offset (next-node prev i)))
-                   do (print prev)
-                      (setf prev (next-node prev i))
+          do (loop until (= (node-offset node) (node-offset (next-node prev i)))
+                   do (setf prev (next-node prev i))
                    finally (setf (ref-64 *sap* (+ (node-next-start prev) (* 8 i)))
                                  (ref-64 *sap* (+ (node-next-start node) (* 8 i))))))
-    (free heap (node-offset node))))
+    (free-node heap node)))
 
 (defmethod accept ((db skip-list-db) kbuf ksiz writable full empty)
   (with-slots (head stream) db
@@ -251,12 +253,4 @@
            (setf (value db "aaa") "a")
            (setf (value db "aaa") "aa")
            (value db "aaa"))
-      (db-close db))))
-
-(defun test2 ()
-  (let ((db (make-skip-list-db 100)))
-    (db-open db "/tmp/s.db")
-    (unwind-protect
-         (progn
-           (setf (value db "foo") "hop"))
       (db-close db))))
