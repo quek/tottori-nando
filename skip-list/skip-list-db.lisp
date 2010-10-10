@@ -45,7 +45,7 @@
    (head :initform (make-instance 'node))
    (heap :initform (make-heap))
    (stream :initform nil)
-   (mmap-size :initarg :mmap-size :initform (ash 1 20))))
+   (mmap-size :initarg :mmap-size :initform (ash 32 20))))
 
 (defun make-skip-list-db (record-count &key (p 0.25))
   (let ((db (make-instance 'skip-list-db :p p)))

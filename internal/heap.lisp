@@ -42,10 +42,6 @@
   (with-slots (file) heap
     (let* ((sap (db-stream-sap file))
            (size (- (ref-64 sap (- offset 8)) 8)))
-      ;;(break "~a ~a ~a" heap offset size)
-      (loop for i from offset
-            repeat size
-            do (setf (ref-8 sap i) #xff))
       (loop with new-fragment = (make-fragment :offset offset :size size)
             for x = (heap-fragments heap) then (fragment-next x)
             and prev = nil then x
