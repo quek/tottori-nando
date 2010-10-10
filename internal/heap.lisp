@@ -77,17 +77,15 @@
     heap))
 
 (defun load-fragments (heap)
-  (let ((heap-fragments-offset (heap-fragments-offset heap)))
+  (let ((heap-fragments-offset (heap-fragments-offset heap))
+        (sap (db-stream-sap (heap-file heap))))
     (unless (zerop heap-fragments-offset)
-      (let* ((sap (db-stream-sap (heap-file heap)))
-             (start (ref-64 sap heap-fragments-offset)))
-        (let ((fragments (loop for offset = start then next
-                               until (zerop offset)
-                               for next = (ref-64 sap offset)
-                               collect (make-fragment :offset offset
-                                            :size (ref-64 sap (- offset 8))))))
-          (setf (heap-fragments heap) (car fragments))
-          (loop for i in fragments
-                and j in (cdr fragments)
-                do (setf (fragment-next i) j))))))
+      (let ((fragments (loop for offset = heap-fragments-offset then (ref-64 sap offset)
+                             until (zerop offset)
+                             collect (make-fragment :offset offset
+                                          :size (- (ref-64 sap (- offset 8)) 8)))))
+        (setf (heap-fragments heap) (car fragments))
+        (loop for i in fragments
+              and j in (cdr fragments)
+              do (setf (fragment-next i) j)))))
   heap)

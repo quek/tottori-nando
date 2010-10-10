@@ -41,7 +41,7 @@
    (head :initform (make-instance 'node))
    (heap :initform (make-heap))
    (stream :initform nil)
-   (mmap-size :initarg :mmap-size :initform (ash 32 20))))
+   (mmap-size :initarg :mmap-size :initform (ash 1 20))))
 
 (defun make-skip-list-db (record-count &key (p 0.25))
   (let ((db (make-instance 'skip-list-db :p p)))
@@ -251,4 +251,12 @@
            (setf (value db "aaa") "a")
            (setf (value db "aaa") "aa")
            (value db "aaa"))
+      (db-close db))))
+
+(defun test2 ()
+  (let ((db (make-skip-list-db 100)))
+    (db-open db "/tmp/s.db")
+    (unwind-protect
+         (progn
+           (setf (value db "foo") "hop"))
       (db-close db))))
