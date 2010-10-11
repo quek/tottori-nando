@@ -11,6 +11,7 @@
 (defconstant +heap-start-offset+ 16)
 (defconstant +heap-end-offset+ 24)
 (defconstant +heap-fragments-offset+ 32)
+(defconstant +node-count-offset+ 40)
 (defconstant +initial-heap-start-value+ 64)
 
 (defconstant +node-size+ (* 8 6))
@@ -24,9 +25,40 @@
   (next-start 0 :type fixnum)
   (next-end 0 :type fixnum))
 
+(defun new-node (heap max-level kbuf ksiz vbuf vsiz)
+  (let* ((next-size (* 8 max-level))
+         (node-offset (alloc heap (+ +node-size+ ksiz)))
+         (value-offset (alloc heap vsiz))
+         (key-start (+ node-offset +node-size+))
+         (key-end (+ key-start ksiz))
+         (value-start value-offset)
+         (value-end (+ value-start vsiz))
+         (next-offset (alloc heap next-size))
+         (next-start next-offset)
+         (next-end (+ next-start next-size)))
+    (setf (ref-64 *sap* node-offset) key-start
+          (ref-64 *sap* (+ node-offset 8)) key-end
+          (ref-64 *sap* (+ node-offset 16)) value-start
+          (ref-64 *sap* (+ node-offset 24)) value-end
+          (ref-64 *sap* (+ node-offset 32)) next-start
+          (ref-64 *sap* (+ node-offset 40)) next-end)
+    (copy-vector-to-sap kbuf 0 *sap* key-start ksiz)
+    (copy-vector-to-sap vbuf 0 *sap* value-start vsiz)
+    (loop for i from next-start below next-end by 8
+          do (setf (ref-64 *sap* i) 0))
+    (values (make-node :offset node-offset
+                       :key-start key-start
+                       :key-end key-end
+                       :value-start value-start
+                       :value-end value-end
+                       :next-start next-start
+                       :next-end next-end)
+            node-offset)))
+
 (defun free-node (heap node)
+  (free heap (node-offset node))
   (free heap (node-value-start node))
-  (free heap (node-offset node)))
+  (free heap (node-next-start node)))
 
 (defun save-node-value (node)
   (let ((offset (node-offset node)))
@@ -41,22 +73,48 @@
 
 (defclass skip-list-db (basic-db)
   ((p :initarg :p :initform 0.25)
-   (max-level :initarg :max-level :initform 0 :type fixnum :accessor max-level)
-   (head :initform (make-instance 'node))
+   (max-level :initform 1 :type fixnum :accessor max-level)
+   (head :initform (make-node))
    (heap :initform (make-heap))
    (stream :initform nil)
-   (mmap-size :initarg :mmap-size :initform (ash 32 20))))
+   (mmap-size :initarg :mmap-size :initform (ash 32 20))
+   (node-count :initform (make-instance 'atomic-int))
+   (threshold-node-count :initform 0)))
 
-(defun make-skip-list-db (record-count &key (p 0.25))
-  (let ((db (make-instance 'skip-list-db :p p)))
-    (with-slots (p max-level head) db
-      (setf max-level (ceiling (log record-count (/ 1 p)))
-            head (make-node)))
-    db))
+(defmethod initialize-instance :after ((db skip-list-db) &key)
+  (with-slots (p max-level) db
+    (setf max-level (compute-max-level 100 p))))
 
+(defun compute-max-level (record-count p)
+  (max 1 (ceiling (log record-count (/ 1 p)))))
+
+(defun recompute-max-level (skip-list-db node-count)
+  (with-slots (p max-level threshold-node-count head heap) skip-list-db
+    (when (< threshold-node-count node-count)
+      (let ((new-max-level (compute-max-level node-count p)))
+        (when (/= max-level new-max-level)
+          (format t "~&new max level: ~d, old: ~d" new-max-level max-level)
+          (let* ((new-next-size (* 8 new-max-level))
+                 (old-head-next-start (node-next-start head))
+                 (new-next (alloc heap new-next-size)))
+            (loop for i from new-next below (+ new-next new-next-size) by 8
+                  do (setf (ref-64 *sap* i) 0))
+            (loop for src from (node-next-start head) below (node-next-end head) by 8
+                  for dest from new-next by 8
+                  do (setf (ref-64 *sap* dest) (ref-64 *sap* src)))
+            (setf (node-next-start head) new-next
+                  (node-next-end head) (+ new-next new-next-size))
+            (setf threshold-node-count (compute-threshold-node-count skip-list-db))
+            (setf max-level new-max-level)
+            (free heap old-head-next-start)))))))
+
+(defun compute-threshold-node-count (skip-list-db)
+  (with-slots (node-count threshold-node-count) skip-list-db
+    (let ((node-count (atomic-int-value node-count)))
+      (setf threshold-node-count (ceiling (max (/ node-count 2) 10000))))))
 
 (defmethod db-open ((db skip-list-db) path)
-  (with-slots (stream mmap-size heap head max-level) db
+  (with-slots (stream mmap-size heap head max-level node-count) db
     (setf stream (open path :direction :io :element-type '(unsigned-byte 8)
                        :if-exists :overwrite :if-does-not-exist :create)
           stream (make-instance 'db-stream :base-stream stream :mmap-size mmap-size :ext 1.5))
@@ -78,17 +136,21 @@
                   (heap-fragments-offset heap) (ref-64 *sap* +heap-fragments-offset+))
             (load-fragments heap)
             (setf (node-next-start head) (ref-64 *sap* +head-next-start-offset+)
-                  (node-next-end head) (ref-64 *sap* +head-next-end-offset+)))))))
+                  (node-next-end head) (ref-64 *sap* +head-next-end-offset+))
+            (setf max-level (/ (- (node-next-end head) (node-next-start head)) 8))
+            (setf (atomic-int-value node-count) (ref-64 *sap* +node-count-offset+)))))
+    (compute-threshold-node-count db)))
 
 (defmethod db-close ((db skip-list-db))
-  (with-slots (head heap stream) db
+  (with-slots (head heap stream node-count) db
     (with-sap (stream)
       (dump-fragments heap)
       (setf (ref-64 *sap* +head-next-start-offset+) (node-next-start head)
             (ref-64 *sap* +head-next-end-offset+) (node-next-end head))
       (setf (ref-64 *sap* +heap-start-offset+) (heap-start heap)
             (ref-64 *sap* +heap-end-offset+) (heap-end heap)
-            (ref-64 *sap* +heap-fragments-offset+) (heap-fragments-offset heap)))
+            (ref-64 *sap* +heap-fragments-offset+) (heap-fragments-offset heap))
+      (setf (ref-64 *sap* +node-count-offset+) (atomic-int-value node-count)))
     (close stream)))
 
 (defun next-node (node level)
@@ -134,64 +196,35 @@
                (when (= -1 (decf level))
                  (return (values nil prevs))))))
 
-(defun compute-level-for-add (skip-list-db)
-  (with-slots (p max-level) skip-list-db
-    (loop for i from 1
-          if (= i max-level)
-            do (return max-level)
-          if (< p (random 1.0))
-            do (return i))))
+(defun compute-level-for-add (p max-level)
+  (loop for i from 1
+        if (= i max-level)
+          do (return max-level)
+        if (< p (random 1.0))
+          do (return i)))
 
-(defun new-node (skip-list-db kbuf ksiz vbuf vsiz)
-  (with-slots (heap max-level) skip-list-db
-    (let* ((next-size (* 8 max-level))
-           (node-offset (alloc heap (+ +node-size+ ksiz next-size)))
-           (value-offset (alloc heap vsiz))
-           (key-start (+ node-offset +node-size+))
-           (key-end (+ key-start ksiz))
-           (value-start value-offset)
-           (value-end (+ value-start vsiz))
-           (next-start key-end)
-           (next-end (+ next-start next-size)))
-      (setf (ref-64 *sap* node-offset) key-start
-            (ref-64 *sap* (+ node-offset 8)) key-end
-            (ref-64 *sap* (+ node-offset 16)) value-start
-            (ref-64 *sap* (+ node-offset 24)) value-end
-            (ref-64 *sap* (+ node-offset 32)) next-start
-            (ref-64 *sap* (+ node-offset 40)) next-end)
-      (copy-vector-to-sap kbuf 0 *sap* key-start ksiz)
-      (copy-vector-to-sap vbuf 0 *sap* value-start vsiz)
-      (loop for i from next-start below next-end by 8
-            do (setf (ref-64 *sap* i) 0))
-      (values (make-node :offset node-offset
-                         :key-start key-start
-                         :key-end key-end
-                         :value-start value-start
-                         :value-end value-end
-                         :next-start next-start
-                         :next-end next-end)
-              node-offset))))
 
 (defun %skip-list-add (skip-list-db prevs kbuf ksiz vbuf vsiz)
-  (with-slots (heap max-level) skip-list-db
-    (multiple-value-bind (node offset) (new-node skip-list-db kbuf ksiz vbuf vsiz)
-      (loop for level fixnum from 0 below (compute-level-for-add skip-list-db)
-            for prev across (the simple-vector prevs)
-            do (shiftf (ref-64 *sap* (+ (node-next-start node) (* 8 level)))
-                       (ref-64 *sap* (+ (node-next-start prev) (* 8 level)))
-                       offset)))))
+  (with-slots (heap max-level p) skip-list-db
+    (let ((max-level max-level))
+      (multiple-value-bind (node offset) (new-node heap max-level kbuf ksiz vbuf vsiz)
+        (loop for level fixnum from 0 below (compute-level-for-add p max-level)
+              for prev across (the simple-vector prevs)
+              do (shiftf (ref-64 *sap* (+ (node-next-start node) (* 8 level)))
+                         (ref-64 *sap* (+ (node-next-start prev) (* 8 level)))
+                         offset))))))
 
 (defun %replace-value (skip-list-db node vbuf vsiz)
   (with-slots (heap) skip-list-db
     (let ((value-offset (alloc heap vsiz))
-          (old (node-value-start node)))
+          (old-node-value-start (node-value-start node)))
       (copy-vector-to-sap vbuf 0
                           *sap* value-offset
                           vsiz)
       (setf (node-value-start node) value-offset
             (node-value-end node) (+ value-offset vsiz))
       (save-node-value node)
-      (free heap old))))
+      (free heap old-node-value-start))))
 
 (defun %skip-list-remove (skip-list-db node level prev)
   (with-slots (heap max-level) skip-list-db
@@ -202,8 +235,9 @@
                                  (ref-64 *sap* (+ (node-next-start node) (* 8 i))))))
     (free-node heap node)))
 
+
 (defmethod accept ((db skip-list-db) kbuf ksiz writable full empty)
-  (with-slots (head stream) db
+  (with-slots (head stream node-count) db
     (with-sap (stream)
       (if writable
           ;; 更新系
@@ -215,7 +249,8 @@
                   (case vbuf
                     (:remove
                        ;; 削除
-                       (%skip-list-remove db node level prev))
+                       (%skip-list-remove db node level prev)
+                       (atomic-int-add node-count -1))
                     (:nop t)
                     (t
                        ;; 置き換え（+nop+ ではない場合）
@@ -225,7 +260,8 @@
                   (case vbuf
                     ((:nop :remove) t)
                     (t
-                       (%skip-list-add db prevs kbuf ksiz vbuf vsiz))))))
+                       (%skip-list-add db prevs kbuf ksiz vbuf vsiz)
+                       (recompute-max-level db (atomic-int-add node-count 1)))))))
           ;; 参照系
           (let ((node (%skip-list-search db kbuf ksiz)))
             (if node
@@ -236,7 +272,7 @@
                 (funcall empty kbuf ksiz)))))))
 
 (defun test ()
-  (let ((db (make-skip-list-db 100)))
+  (let ((db (make-instance 'skip-list-db)))
     (db-open db "/tmp/s.db")
     (unwind-protect
          (progn
@@ -252,5 +288,6 @@
            (assert (null (value db "bar")))
            (setf (value db "aaa") "a")
            (setf (value db "aaa") "aa")
-           (value db "aaa"))
+           (value db "aaa")
+           (= 3 (atomic-int-value (slot-value db 'node-count))))
       (db-close db))))

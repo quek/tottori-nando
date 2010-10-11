@@ -23,7 +23,7 @@
            #:delete-op
            #:delete-op*
 
-           #:make-skip-list-db))
+           #:skip-list-db))
 
 (series::install :pkg :tottori-nando)
 

@@ -43,16 +43,30 @@
 (defun example3 ()
   (time
    (let* ((n 100000)
-          (db (make-skip-list-db n)))
-     (db-open db "/tmp/skip-list.db")
+          (db (make-instance 'skip-list-db)))
+     (db-open db "/tmp/skip-list-example.db")
      (unwind-protect
-          (progn
-            (loop for i from 0 to n
-                  for x = (random n)
+          (let ((ns (loop for i from 1 to n
+                          for x = (random n)
+                          for k = (format nil "key~a" x)
+                          for v = (format nil "value~a" x)
+                          if (zerop (mod i 10000))
+                            do (format t "~&~d" i)
+                          do (setf (value db k) v)
+                          collect x)))
+            (loop for i from 1
+                  for x in ns
                   for k = (format nil "key~a" x)
                   for v = (format nil "value~a" x)
                   if (zerop (mod i 10000))
                     do (format t "~&~d" i)
-                  do (setf (value db k) v)
                   do (assert (equal v (value db k)))))
        (db-close db)))))
+;; Evaluation took:
+;;   8.140 seconds of real time
+;;   8.060504 seconds of total run time (7.980499 user, 0.080005 system)
+;;   [ Run times consist of 0.172 seconds GC time, and 7.889 seconds non-GC time. ]
+;;   99.03% CPU
+;;   7 forms interpreted
+;;   14,615,417,781 processor cycles
+;;   834,702,560 bytes consed
