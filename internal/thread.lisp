@@ -4,7 +4,7 @@
   (cons nil nil))
 
 (defun lock-spinlock (spinlock)
-  (loop until (sb-ext:compare-and-swap (car spinlock) nil t)))
+  (loop while (sb-ext:compare-and-swap (car spinlock) nil t)))
 
 (defun unlock-spinlock (spinlock)
   (setf (car spinlock) nil))

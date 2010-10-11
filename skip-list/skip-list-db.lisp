@@ -79,7 +79,8 @@
    (stream :initform nil)
    (mmap-size :initarg :mmap-size :initform (ash 32 20))
    (node-count :initform (make-instance 'atomic-int))
-   (threshold-node-count :initform 0)))
+   (threshold-node-count :initform 0)
+   (lock :initform (make-spinlock))))
 
 (defmethod initialize-instance :after ((db skip-list-db) &key)
   (with-slots (p max-level) db
@@ -237,43 +238,44 @@
 
 
 (defmethod accept ((db skip-list-db) kbuf ksiz writable full empty)
-  (with-slots (head stream node-count) db
-    (with-sap (stream)
-      (if writable
-          ;; 更新系
-          (multiple-value-bind (node prevs level prev) (%skip-list-search db kbuf ksiz)
-            (if node
-                ;; 該当あり
-                (multiple-value-bind (vbuf vsiz) (funcall full kbuf ksiz
-                                                          node 0)
-                  (case vbuf
-                    (:remove
-                       ;; 削除
-                       (%skip-list-remove db node level prev)
-                       (atomic-int-add node-count -1))
-                    (:nop t)
-                    (t
-                       ;; 置き換え（+nop+ ではない場合）
-                       (%replace-value db node vbuf vsiz))))
-                ;; 該当なし
-                (multiple-value-bind (vbuf vsiz) (funcall empty kbuf ksiz)
-                  (case vbuf
-                    ((:nop :remove) t)
-                    (t
-                       (%skip-list-add db prevs kbuf ksiz vbuf vsiz)
-                       (recompute-max-level db (atomic-int-add node-count 1)))))))
-          ;; 参照系
-          (let ((node (%skip-list-search db kbuf ksiz)))
-            (if node
-                (let* ((vsiz (- (node-value-end node) (node-value-start node)))
-                       (vbuf (make-buffer vsiz)))
-                  (copy-sap-to-vector *sap* (node-value-start node) vbuf 0 vsiz)
-                  (funcall full kbuf ksiz vbuf vsiz))
-                (funcall empty kbuf ksiz)))))))
+  (with-slots (head stream node-count lock) db
+    (with-spinlock (lock)
+      (with-sap (stream)
+        (if writable
+            ;; 更新系
+            (multiple-value-bind (node prevs level prev) (%skip-list-search db kbuf ksiz)
+              (if node
+                  ;; 該当あり
+                  (multiple-value-bind (vbuf vsiz) (funcall full kbuf ksiz
+                                                            node 0)
+                    (case vbuf
+                      (:remove
+                         ;; 削除
+                         (%skip-list-remove db node level prev)
+                         (atomic-int-add node-count -1))
+                      (:nop t)
+                      (t
+                         ;; 置き換え（+nop+ ではない場合）
+                         (%replace-value db node vbuf vsiz))))
+                  ;; 該当なし
+                  (multiple-value-bind (vbuf vsiz) (funcall empty kbuf ksiz)
+                    (case vbuf
+                      ((:nop :remove) t)
+                      (t
+                         (%skip-list-add db prevs kbuf ksiz vbuf vsiz)
+                         (recompute-max-level db (atomic-int-add node-count 1)))))))
+            ;; 参照系
+            (let ((node (%skip-list-search db kbuf ksiz)))
+              (if node
+                  (let* ((vsiz (- (node-value-end node) (node-value-start node)))
+                         (vbuf (make-buffer vsiz)))
+                    (copy-sap-to-vector *sap* (node-value-start node) vbuf 0 vsiz)
+                    (funcall full kbuf ksiz vbuf vsiz))
+                  (funcall empty kbuf ksiz))))))))
 
-(defun test ()
+(defun test1 ()
   (let ((db (make-instance 'skip-list-db)))
-    (db-open db "/tmp/s.db")
+    (db-open db "/tmp/skip-list-test1.db")
     (unwind-protect
          (progn
            (setf (value db "foo") "hop")
@@ -291,3 +293,52 @@
            (value db "aaa")
            (= 3 (atomic-int-value (slot-value db 'node-count))))
       (db-close db))))
+
+(defun test2 ()
+  (time
+   (let* ((n 100000)
+          (db (make-instance 'skip-list-db)))
+     (db-open db "/tmp/skip-list-test2.db")
+     (unwind-protect
+          (let ((ns (loop for i from 1 to n
+                          for x = (random n)
+                          for k = (format nil "key~a" x)
+                          for v = (format nil "value~a" x)
+                          if (zerop (mod i 10000))
+                            do (format t "~&~d" i)
+                          do (setf (value db k) v)
+                          collect x)))
+            (loop for i from 1
+                  for x in ns
+                  for k = (format nil "key~a" x)
+                  for v = (format nil "value~a" x)
+                  if (zerop (mod i 10000))
+                    do (format t "~&~d" i)
+                  do (assert (equal v (value db k)))))
+       (db-close db)))))
+
+
+(defun test3 ()
+  (time
+   (let* ((n 10000)
+          (thread-count 3)
+          (db (make-instance 'skip-list-db))
+          (file "/tmp/skip-list-test3.db"))
+     (ignore-errors (delete-file file))
+     (db-open db file)
+     (unwind-protect
+          (let ((threads
+                 (loop for i from 0 below thread-count collect
+                   (let ((i i))
+                     (sb-thread:make-thread
+                      (lambda ()
+                        (macrolet ((m (&body body)
+                                     `(loop for x from (* i n) below (+ (* i n) n)
+                                            for k = (format nil "key~a" x)
+                                            for v = (format nil "value~a" x)
+                                            do ,@body)))
+                          (m (setf (value db k) v))
+                          (m (assert (equal v (value db k)) nil
+                                     "~a => ~a : ~a" k v (value db k))))))))))
+            (mapc #'sb-thread:join-thread threads))
+       (db-close db)))))
