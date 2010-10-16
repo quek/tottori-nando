@@ -137,6 +137,42 @@ kcfile のトランザクションの実装は
     (read-byte base-stream))
   ())
 
+(defmacro define-write-unsigned-byte-method (name size)
+  `(define-write-method ,name ((stream mmap-stream) integer)
+     ,size
+     (setf (sb-sys:sap-ref-64 sap position) integer)
+     (let ((buffer (unsigned-byte-to-vector integer ,size)))
+       (file-position base-stream position)
+       (write-sequence buffer base-stream))
+     (let ((mlen (- mmap-size position))
+           (buffer (unsigned-byte-to-vector integer ,size)))
+       (copy-vector-to-sap buffer 0 sap position mlen)
+       (file-position base-stream (1- mmap-size))
+       (write-sequence buffer base-stream :start (1- mlen) :end ,size))
+     integer))
+
+(defmacro define-read-unsigned-byte-method (name size)
+  `(define-read-method ,name ((stream mmap-stream))
+     ,size
+     (sb-sys:sap-ref-64 sap position)
+     (let ((buffer (make-buffer ,size)))
+       (file-position base-stream position)
+       (read-sequence buffer base-stream :end ,size)
+       (vector-to-unsigned-byte buffer ,size))
+     (let ((mlen (- mmap-size position))
+           (buffer (make-buffer ,size)))
+       (copy-sap-to-vector sap position buffer 0 mlen)
+       (file-position base-stream (1- mmap-size))
+       (read-sequence buffer base-stream :start (1- mlen) :end ,size)
+       (vector-to-unsigned-byte buffer ,size))))
+
+(loop for (write-name read-name size) in '((write-unsigned-byte-64 read-unsigned-byte-64 8)
+                                           (write-unsigned-byte-32 read-unsigned-byte-32 4)
+                                           (write-unsigned-byte-16 read-unsigned-byte-16 2))
+      do (define-write-unsigned-byte-method write-name size)
+         (define-read-unsigned-byte-method read-name size))
+
+
 (defmethod sb-gray:stream-file-position ((stream mmap-stream) &optional position-spec)
   (with-slots (base-stream position) stream
     (if position-spec

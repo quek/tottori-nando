@@ -162,6 +162,19 @@
 (defun make-buffer (size)
   (make-array size :element-type '(unsigned-byte 8)))
 
+(defun unsigned-byte-to-vector (unsigned-byte size)
+  (let ((buffer (make-buffer size)))
+    (loop for i from 0 below size
+          do (setf (aref buffer i)
+                   (ldb (byte 8 (* i 8)) unsigned-byte)))
+    buffer))
+
+(defun vector-to-unsigned-byte (vector size)
+  (loop for i from 0 below size
+        with n = 0
+        do (setf n (dpb (aref vector i) (byte 8 (* i 8)) n))
+        finally (return n)))
+
 (macrolet ((def-refs ()
                `(progn
                   ,@(loop for (x y) in '((ref-8 sb-sys:sap-ref-8)
