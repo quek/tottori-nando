@@ -105,6 +105,7 @@
                   do (setf (ref-64 *sap* dest) (ref-64 *sap* src)))
             (setf (node-next-start head) new-next
                   (node-next-end head) (+ new-next new-next-size))
+            (save-head-next head)
             (setf threshold-node-count (compute-threshold-node-count skip-list-db))
             (setf max-level new-max-level)
             (free heap old-head-next-start)))))))
@@ -113,6 +114,10 @@
   (with-slots (node-count threshold-node-count) skip-list-db
     (let ((node-count (atomic-int-value node-count)))
       (setf threshold-node-count (ceiling (max (/ node-count 2) 10000))))))
+
+(defun save-head-next (head-node)
+  (setf (ref-64 *sap* +head-next-start-offset+) (node-next-start head-node)
+        (ref-64 *sap* +head-next-end-offset+) (node-next-end head-node)))
 
 (defmethod db-open ((db skip-list-db) path)
   (with-slots (stream mmap-size heap head max-level node-count) db
@@ -129,8 +134,9 @@
                   (heap-fragments-offset heap) 0)
             (let* ((size (* 8 max-level))
                    (next-start (alloc heap size)))
-                (setf (node-next-start head) next-start
-                      (node-next-end head) (+ next-start size))))
+              (setf (node-next-start head) next-start
+                    (node-next-end head) (+ next-start size))
+              (save-head-next head)))
           (progn
             (setf (heap-start heap) (ref-64 *sap* +heap-start-offset+)
                   (heap-end heap) (ref-64 *sap* +heap-end-offset+)
@@ -178,8 +184,7 @@
     (loop with level fixnum = (1- max-level)
           with node-1 = head
           with prevs = (make-array max-level :initial-element nil)
-          for node = (next-node head level)
-            then (next-node node-1 level)
+          for node = (next-node head level) then (next-node node-1 level)
           if node
             do (let ((compare (compare-key *sap* (node-key-start node) (node-key-end node)
                                            kbuf 0 ksiz)))
