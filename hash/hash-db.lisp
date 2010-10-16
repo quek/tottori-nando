@@ -544,7 +544,7 @@
     (with-spin-rw-lock (mlock_ t)
       (setf file_ (open path :direction :io :element-type '(unsigned-byte 8)
                         :if-exists :overwrite :if-does-not-exist :create)
-            file_ (make-instance 'db-stream :base-stream file_ :mmap-size msiz_ :ext 1.5))
+            file_ (make-instance 'mmap-stream :base-stream file_ :mmap-size msiz_ :ext 1.5))
       ;; TODO ここでリカバリー処理が走る。
       (when (zerop (stream-length file_))
         (calc-meta db)

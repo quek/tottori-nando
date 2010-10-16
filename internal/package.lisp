@@ -16,8 +16,8 @@
            #:atomic-int-add
            #:atomic-int-secure-least
 
-           #:db-stream
-           #:db-stream-sap
+           #:mmap-stream
+           #:mmap-stream-sap
            #:stream-truncate
            #:stream-length
            #:read-seq-at

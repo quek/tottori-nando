@@ -23,7 +23,7 @@
   (with-slots (file) heap
     (let ((offset (heap-end heap))
           (whole-size (+ size 8 (padding size)))) ; 8 はサイズの分
-      (setf (ref-64 (db-stream-sap file) (heap-end heap)) whole-size)
+      (setf (ref-64 (mmap-stream-sap file) (heap-end heap)) whole-size)
       (incf (heap-end heap) whole-size)
       (make-fragment :offset (+ offset 8) :size (- whole-size 8)))))
 
@@ -43,7 +43,7 @@
 (defun free (heap offset)
   (with-spinlock ((heap-lock heap))
     (with-slots (file) heap
-      (let* ((sap (db-stream-sap file))
+      (let* ((sap (mmap-stream-sap file))
              (size (- (ref-64 sap (- offset 8)) 8)))
         (loop with new-fragment = (make-fragment :offset offset :size size)
               for x = (heap-fragments heap) then (fragment-next x)
@@ -62,7 +62,7 @@
 
 (defun dump-fragments (heap)
   (with-spinlock ((heap-lock heap))
-    (let* ((sap (db-stream-sap (heap-file heap)))
+    (let* ((sap (mmap-stream-sap (heap-file heap)))
            (heap-fragments (heap-fragments heap)))
       (setf (heap-fragments-offset heap)
             (if heap-fragments
@@ -79,7 +79,7 @@
 (defun load-fragments (heap)
   (with-spinlock ((heap-lock heap))
     (let ((heap-fragments-offset (heap-fragments-offset heap))
-          (sap (db-stream-sap (heap-file heap))))
+          (sap (mmap-stream-sap (heap-file heap))))
       (unless (zerop heap-fragments-offset)
         (let ((fragments (loop for offset = heap-fragments-offset then (ref-64 sap offset)
                                until (zerop offset)

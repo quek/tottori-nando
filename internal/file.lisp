@@ -8,24 +8,26 @@ kcfile のトランザクションの実装は
 |#
 (in-package :tottori-nando.internal)
 
-(defclass db-stream (sb-gray:fundamental-binary-input-stream
+(defclass mmap-stream (sb-gray:fundamental-binary-input-stream
                      sb-gray:fundamental-binary-output-stream)
   ((base-stream :initarg :base-stream)
    (mmap-size :initarg :mmap-size)
+   (file-length :initform 0)
    (position :initform 0)
-   (sap :reader db-stream-sap)
+   (sap :reader mmap-stream-sap)
    (ext :initarg :ext :initform nil)))
 
-(defmethod initialize-instance :after ((stream db-stream) &key)
-  (with-slots (base-stream mmap-size sap) stream
-    (setf sap (sb-posix:mmap nil
+(defmethod initialize-instance :after ((stream mmap-stream) &key)
+  (with-slots (base-stream file-length mmap-size sap) stream
+    (setf file-length (file-length base-stream)
+          sap (sb-posix:mmap nil
                              mmap-size
                              (boole boole-ior sb-posix:prot-read sb-posix:prot-write)
                              sb-posix:map-shared
                              (sb-sys:fd-stream-fd base-stream)
                              0))))
 
-(defmethod close ((stream db-stream) &key abort)
+(defmethod close ((stream mmap-stream) &key abort)
   (with-slots (base-stream mmap-size sap) stream
     (sb-posix:munmap sap mmap-size)
     (close base-stream :abort abort)))
@@ -38,55 +40,104 @@ kcfile のトランザクションの実装は
   (file-position stream position)
   (write-sequence sequence stream :start start :end end))
 
-(defmethod sb-gray:stream-write-sequence ((stream db-stream)
-                                          (buffer sequence)
-                                          &optional (start 0) end)
-  (with-slots (base-stream mmap-size sap position ext) stream
-    (let* ((length (if end (- end start) (length buffer))))
-      (flet ((ext ()
-               (let ((current-len (file-length base-stream))
-                     (new-len (+ position length)))
-                 (when (< current-len new-len)
-                   (sb-posix:ftruncate base-stream
+(defmacro define-write-method (name
+                               (&rest lambda-list)
+                               length
+                               <proc
+                               <=proc
+                               tproc
+                               return-value)
+  `(defmethod ,name ,lambda-list
+     (with-slots (base-stream file-length mmap-size sap position ext) stream
+       (let* ((length ,length)
+              (end-position (+ length position)))
+         (flet ((ext ()
+                  (let ((current-len file-length))
+                    (when (< current-len end-position)
+                      (stream-truncate stream
                                        (if ext
                                            (min mmap-size (ceiling (* current-len ext)))
-                                           new-len))))))
-        (cond ((< (+ position length) mmap-size)
-               (ext)
-               (copy-vector-to-sap buffer start sap psition length))
-              ((<= mmap-size position)
-               (file-position base-stream position)
-               (write-sequence buffer base-stream))
-              (t
-               (ext)
-               (let ((mlen (- mmap-size position)))
-                 (copy-vector-to-sap buffer start sap position mlen)
-                 (file-position base-stream (1- mmap-size))
-                 (write-sequence buffer base-stream :start (1- mlen) :end end))))
-        (setf position (+ position length))
-        buffer))))
+                                           end-position))))))
+           (cond ((< end-position mmap-size)
+                  (ext)
+                  ,<proc)
+                 ((<= mmap-size position)
+                  ,<=proc)
+                 (t
+                  (ext)
+                  ,tproc))
+           (setf position end-position)
+           ,return-value)))))
 
-(defmethod sb-gray:stream-read-sequence ((stream db-stream)
-                                         (buffer sequence)
-                                         &optional (start 0) (end nil))
-  (with-slots (base-stream mmap-size sap position) stream
+(defmacro define-read-method (name
+                              (&rest lambda-list)
+                              length
+                              <proc
+                              <=proc
+                              tproc)
+  `(defmethod ,name ,lambda-list
+     (with-slots (base-stream mmap-size sap position) stream
+       (let ((length ,length))
+         (prog1
+             (cond ((< (+ position length) mmap-size)
+                    ,<proc)
+                   ((<= mmap-size position)
+                    ,<=proc)
+                   (t
+                    ,tproc))
+           (incf position length))))))
+
+(define-write-method sb-gray:stream-write-sequence ((stream mmap-stream)
+                                                    (buffer sequence)
+                                                    &optional (start 0) end)
+  (if end (- end start) (length buffer))
+  (copy-vector-to-sap buffer start sap position length)
+  (progn
+    (file-position base-stream position)
+    (write-sequence buffer base-stream)
+    (setf file-length end-position))
+  (let ((mlen (- mmap-size position)))
+    (copy-vector-to-sap buffer start sap position mlen)
+    (file-position base-stream (1- mmap-size))
+    (write-sequence buffer base-stream :start (1- mlen) :end end))
+  buffer)
+
+
+(define-read-method sb-gray:stream-read-sequence ((stream mmap-stream)
+                                                  (buffer sequence)
+                                                  &optional (start 0) end)
+  (progn
     (unless end (setf end (length buffer)))
-    (let ((length (- end start)))
-      (cond ((< (+ position length) mmap-size)
-             (copy-sap-to-vector sap position buffer start length))
-            ((<= mmap-size position)
-             (file-position base-stream position)
-             (read-sequence buffer base-stream))
-            (t
-             (let ((mlen (- mmap-size position)))
-               (copy-sap-to-vector sap position buffer start mlen)
-               (file-position base-stream (1- mmap-size))
-               (read-sequence buffer base-stream :start (1- mlen) :end end))))
-      (incf position length)
-      end)))
+    (- end start))
+  (progn
+    (copy-sap-to-vector sap position buffer start length)
+    end)
+  (progn
+    (file-position base-stream position)
+    (read-sequence buffer base-stream))
+  (let ((mlen (- mmap-size position)))
+    (copy-sap-to-vector sap position buffer start mlen)
+    (file-position base-stream (1- mmap-size))
+    (read-sequence buffer base-stream :start (1- mlen) :end end)))
 
+(define-write-method sb-gray:stream-write-byte ((stream mmap-stream) integer)
+  1
+  (setf (sb-sys:sap-ref-8 sap position) integer)
+  (progn
+    (file-position base-stream position)
+    (write-byte integer base-stream))
+  ()
+  integer)
 
-(defmethod sb-gray:stream-file-position ((stream db-stream) &optional position-spec)
+(define-read-method sb-gray:stream-read-byte ((stream mmap-stream))
+  1
+  (sb-sys:sap-ref-8 sap position)
+  (progn
+    (file-position base-stream position)
+    (read-byte base-stream))
+  ())
+
+(defmethod sb-gray:stream-file-position ((stream mmap-stream) &optional position-spec)
   (with-slots (base-stream position) stream
     (if position-spec
         (setf position
@@ -98,38 +149,19 @@ kcfile のトランザクションの実装は
                 (t position-spec)))
         position)))
 
-(defmethod sb-gray:stream-write-byte ((stream db-stream) integer)
-  (with-slots (base-stream mmap-size sap position) stream
-    (if (< position mmap-size)
-        (setf (sb-sys:sap-ref-8 sap position) integer)
-        (progn
-          (file-position base-stream position)
-          (write-byte integer base-stream)))
-    (incf position)
-    integer))
-
-(defmethod sb-gray:stream-read-byte ((stream db-stream))
-  (with-slots (base-stream mmap-size sap position) stream
-    (prog1
-        (if (< position mmap-size)
-            (sb-sys:sap-ref-8 sap position)
-            (progn
-              (file-position base-stream position)
-              (read-byte base-stream)))
-      (incf position))))
-
-(defmethod stream-truncate ((stream db-stream) size)
-  (with-slots (base-stream) stream
+(defmethod stream-truncate ((stream mmap-stream) size)
+  (with-slots (base-stream file-length) stream
+    (setf file-length size)
     (sb-posix:ftruncate base-stream size)))
 
-(defmethod stream-length ((stream db-stream))
-  (with-slots (base-stream) stream
-    (file-length base-stream)))
+(defmethod stream-length ((stream mmap-stream))
+  (with-slots (file-length) stream
+    file-length))
 
 #|
 (let ((f (open "/tmp/a.txt" :direction :io :element-type '(unsigned-byte 8)
                :if-exists :overwrite :if-does-not-exist :create)))
-  (with-open-stream (m (make-instance 'db-stream :base-stream f :mmap-size 5))
+  (with-open-stream (m (make-instance 'mmap-stream :base-stream f :mmap-size 5))
     (stream-truncate m 7)
     (let ((code (char-code #\!)))
       (file-position m 1)
