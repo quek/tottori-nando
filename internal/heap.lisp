@@ -5,7 +5,7 @@
   (end 0 :type fixnum)
   (fragments-offset 0 :type fixnum)
   (fragments nil)
-  (file)
+  (stream)
   (lock (make-spinlock)))
 
 (defstruct fragment
@@ -20,10 +20,10 @@
         (- 8 x))))
 
 (defun %alloc (heap size)
-  (with-slots (file) heap
+  (with-slots (stream) heap
     (let ((offset (heap-end heap))
           (whole-size (+ size 8 (padding size)))) ; 8 はサイズの分
-      (setf (ref-64 (mmap-stream-sap file) (heap-end heap)) whole-size)
+      (write-64-at stream (heap-end heap) whole-size)
       (incf (heap-end heap) whole-size)
       (make-fragment :offset (+ offset 8) :size (- whole-size 8)))))
 
@@ -42,9 +42,8 @@
 
 (defun free (heap offset)
   (with-spinlock ((heap-lock heap))
-    (with-slots (file) heap
-      (let* ((sap (mmap-stream-sap file))
-             (size (- (ref-64 sap (- offset 8)) 8)))
+    (with-slots (stream) heap
+      (let ((size (- (read-64-at stream (- offset 8)) 8)))
         (loop with new-fragment = (make-fragment :offset offset :size size)
               for x = (heap-fragments heap) then (fragment-next x)
               and prev = nil then x
@@ -62,7 +61,7 @@
 
 (defun dump-fragments (heap)
   (with-spinlock ((heap-lock heap))
-    (let* ((sap (mmap-stream-sap (heap-file heap)))
+    (let* ((stream (heap-stream heap))
            (heap-fragments (heap-fragments heap)))
       (setf (heap-fragments-offset heap)
             (if heap-fragments
@@ -72,19 +71,18 @@
             while i
             for j = (fragment-next i)
             for next-offset = (if j (fragment-offset j) 0)
-            do (setf (ref-64 sap (fragment-offset i))
-                     next-offset))
+            do (write-64-at stream (fragment-offset i) next-offset))
       heap)))
 
 (defun load-fragments (heap)
   (with-spinlock ((heap-lock heap))
     (let ((heap-fragments-offset (heap-fragments-offset heap))
-          (sap (mmap-stream-sap (heap-file heap))))
+          (stream (heap-stream heap)))
       (unless (zerop heap-fragments-offset)
-        (let ((fragments (loop for offset = heap-fragments-offset then (ref-64 sap offset)
+        (let ((fragments (loop for offset = heap-fragments-offset then (read-64-at stream offset)
                                until (zerop offset)
                                collect (make-fragment :offset offset
-                                            :size (- (ref-64 sap (- offset 8)) 8)))))
+                                            :size (- (read-8-at stream (- offset 8)) 8)))))
           (setf (heap-fragments heap) (car fragments))
           (loop for i in fragments
                 and j in (cdr fragments)

@@ -30,7 +30,7 @@
            #:heap-end
            #:heap-fragments-offset
            #:heap-fragments
-           #:heap-file
+           #:heap-stream
            #:alloc
            #:free
            #:dump-fragments

@@ -127,7 +127,7 @@
                        :if-exists :overwrite :if-does-not-exist :create)
           stream (make-instance 'mmap-stream :base-stream stream :mmap-size mmap-size :ext 1.5))
     (with-sap (stream)
-      (setf (heap-file heap) stream)
+      (setf (heap-stream heap) stream)
       (if (zerop (stream-length stream))
           (progn
             (stream-truncate stream mmap-size)
