@@ -17,12 +17,21 @@
            #:atomic-int-add
            #:atomic-int-secure-least
 
+           #:open-mmap-stream
            #:mmap-stream
            #:mmap-stream-sap
            #:stream-truncate
            #:stream-length
            #:read-seq-at
            #:write-seq-at
+           #:write-8-at
+           #:write-16-at
+           #:write-32-at
+           #:write-64-at
+           #:read-8-at
+           #:read-16-at
+           #:read-32-at
+           #:read-64-at
 
            #:heap
            #:make-heap

@@ -1,11 +1,3 @@
-#|
-kcfile のトランザクションの実装は
-ファイルに変更前を書く。
-ファイル出力。
-コミットなならログ破棄。
-アボートならログをファイルに反映して元に戻す。
-なのかな。
-|#
 (in-package :tottori-nando.internal)
 
 (defclass mmap-stream (sb-gray:fundamental-binary-input-stream
@@ -217,6 +209,12 @@ kcfile のトランザクションの実装は
 (defmethod stream-length ((stream mmap-stream))
   (with-slots (file-length) stream
     file-length))
+
+(defun open-mmap-stream (path mmap-size &optional (extend 1.5))
+  (make-instance 'mmap-stream
+                 :base-stream (open path :direction :io :element-type '(unsigned-byte 8)
+                                    :if-exists :overwrite :if-does-not-exist :create)
+                 :mmap-size mmap-size :ext extend))
 
 #|
 (let ((f (open "/tmp/a.txt" :direction :io :element-type '(unsigned-byte 8)

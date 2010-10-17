@@ -26,7 +26,11 @@
                (:module "skip-list"
                         :serial t
                         :components ((:file "package")
-                                     (:file "skip-list-db"))))
+                                     (:file "skip-list-db")))
+               (:module "object-store"
+                        :serial t
+                        :components ((:file "package")
+                                     (:file "object-store"))))
   :depends-on (:alexandria
                :anaphora
                :series))

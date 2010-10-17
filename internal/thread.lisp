@@ -34,8 +34,8 @@
 
 (defclass spin-rw-lock ()
   ((spinlock :initform (make-spinlock))
-   (wc :initform 0)
-   (rc :initform 0)))
+   (write-count :initform 0)
+   (read-count :initform 0)))
 
 
 (defgeneric lock-writer (lock))
@@ -47,56 +47,54 @@
 (defgeneric demote (lock))
 
 (defmethod lock-writer ((lock spin-rw-lock))
-  (with-slots (spinlock wc rc) lock
+  (with-slots (spinlock write-count read-count) lock
     (loop
       (with-spinlock (spinlock)
-        (when (and (<= wc 0)
-                   (<= rc 0))
-          (incf wc)
-          (return-from lock-writer)))
-      (sb-thread:thread-yield))))
+        (when (and (zerop write-count)
+                   (zerop read-count))
+          (incf write-count)
+          (return-from lock-writer))))))
 
 (defmethod lock-writer-try ((lock spin-rw-lock))
-  (with-slots (spinlock wc rc) lock
+  (with-slots (spinlock write-count read-count) lock
     (with-spinlock (spinlock)
-      (when (and (<= wc 0)
-                 (<= rc 0))
-        (incf wc)))))
+      (when (and (zerop write-count)
+                 (zerop read-count))
+        (incf write-count)))))
 
 (defmethod lock-reader ((lock spin-rw-lock))
-  (with-slots (spinlock wc rc) lock
+  (with-slots (spinlock write-count read-count) lock
     (loop
       (with-spinlock (spinlock)
-        (when (<= wc 0)
-          (incf rc)
-          (return-from lock-reader)))
-      (sb-thread:thread-yield))))
+        (when (zerop write-count)
+          (incf read-count)
+          (return-from lock-reader))))))
 
 (defmethod lock-reader-try ((lock spin-rw-lock))
-  (with-slots (spinlock wc rc) lock
+  (with-slots (spinlock write-count read-count) lock
     (with-spinlock (spinlock)
-      (when (<= wc 0)
-        (incf rc)))))
+      (when (zerop write-count)
+        (incf read-count)))))
 
 (defmethod unlock ((lock spin-rw-lock))
-  (with-slots (spinlock wc rc) lock
+  (with-slots (spinlock write-count read-count) lock
     (with-spinlock (spinlock)
-      (if (< 0 wc)
-          (decf wc)
-          (decf rc)))))
+      (if (plusp write-count)
+          (decf write-count)
+          (decf read-count)))))
 
 (defmethod promote ((lock spin-rw-lock))
-  (with-slots (spinlock wc rc) lock
+  (with-slots (spinlock write-count read-count) lock
     (with-spinlock (spinlock)
-      (when (<= rc 1)
-        (decf rc)
-        (incf wc)))))
+      (when (= read-count 1)
+        (decf read-count)
+        (incf write-count)))))
 
 (defmethod demote ((lock spin-rw-lock))
-  (with-slots (spinlock wc rc) lock
+  (with-slots (spinlock write-count read-count) lock
     (with-spinlock (spinlock)
-      (decf wc)
-      (incf rc))))
+      (decf write-count)
+      (incf read-count))))
 
 (defmacro with-spin-rw-lock ((lock writer) &body body)
   `(progn
@@ -166,7 +164,7 @@
 
 
 (defclass atomic-int ()
-  ((%value :initform 0)
+  ((%value :initarg :value :initform 0)
    (lock :initform (make-spinlock) :reader atomic-int-lock)))
 
 (defmethod print-object ((self atomic-int) stream)
