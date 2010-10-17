@@ -71,18 +71,17 @@
   (offset 0 :type fixnum)
   (size 0 :type fixnum))
 
-(defclass skip-list ()
-  ((p :initarg :p :initform 0.25)
+(defclass skip-list-db (basic-db)
+  ((heap :initform (make-heap))
+   (stream :initform nil)
+   (mmap-size :initarg :mmap-size :initform (ash 32 20))
+
+   (p :initarg :p :initform 0.25)
    (max-level :initform 1 :type fixnum :accessor max-level)
    (head :initform (make-node))
    (node-count :initform (make-instance 'atomic-int))
    (threshold-node-count :initform 0)
    (lock :initform (make-spinlock))))
-
-(defclass skip-list-db (basic-db skip-list)
-  ((heap :initform (make-heap))
-   (stream :initform nil)
-   (mmap-size :initarg :mmap-size :initform (ash 32 20))))
 
 (defmethod initialize-instance :after ((db skip-list-db) &key)
   (with-slots (p max-level) db
