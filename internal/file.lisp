@@ -9,13 +9,14 @@ kcfile のトランザクションの実装は
 (in-package :tottori-nando.internal)
 
 (defclass mmap-stream (sb-gray:fundamental-binary-input-stream
-                     sb-gray:fundamental-binary-output-stream)
+                       sb-gray:fundamental-binary-output-stream)
   ((base-stream :initarg :base-stream)
    (mmap-size :initarg :mmap-size)
    (file-length :initform 0)
    (position :initform 0)
    (sap :reader mmap-stream-sap)
-   (ext :initarg :ext :initform nil)))
+   (ext :initarg :ext :initform nil)
+   (lock :initform (make-spinlock))))
 
 (defmethod initialize-instance :after ((stream mmap-stream) &key)
   (with-slots (base-stream file-length mmap-size sap) stream
@@ -32,60 +33,54 @@ kcfile のトランザクションの実装は
     (sb-posix:munmap sap mmap-size)
     (close base-stream :abort abort)))
 
-(defmethod read-seq-at (stream sequence position &key (start 0) end)
-  (file-position stream position)
-  (read-sequence sequence stream :start start :end end))
-
-(defmethod write-seq-at (stream sequence position &key (start 0) end)
-  (file-position stream position)
-  (write-sequence sequence stream :start start :end end))
-
 (defmacro define-write-method (name
                                (&rest lambda-list)
                                length
-                               <proc
-                               <=proc
-                               tproc
+                               under-mmap-size
+                               over-mmap-size
+                               cross-over-mmap-size
                                return-value)
   `(defmethod ,name ,lambda-list
-     (with-slots (base-stream file-length mmap-size sap position ext) stream
-       (let* ((length ,length)
-              (end-position (+ length position)))
-         (flet ((ext ()
-                  (let ((current-len file-length))
-                    (when (< current-len end-position)
-                      (stream-truncate stream
-                                       (if ext
-                                           (min mmap-size (ceiling (* current-len ext)))
-                                           end-position))))))
-           (cond ((< end-position mmap-size)
-                  (ext)
-                  ,<proc)
-                 ((<= mmap-size position)
-                  ,<=proc)
-                 (t
-                  (ext)
-                  ,tproc))
-           (setf position end-position)
-           ,return-value)))))
+     (with-slots (base-stream file-length mmap-size sap position ext lock) stream
+       (with-recursive-spinlock (lock)
+         (let* ((length ,length)
+                (end-position (+ length position)))
+           (flet ((ensure-file-length ()
+                    (let ((current-len file-length))
+                      (when (< current-len end-position)
+                        (stream-truncate stream
+                                         (if ext
+                                             (min mmap-size (ceiling (* current-len ext)))
+                                             end-position))))))
+             (cond ((< end-position mmap-size)
+                    (ensure-file-length)
+                    ,under-mmap-size)
+                   ((<= mmap-size position)
+                    ,over-mmap-size)
+                   (t
+                    (ensure-file-length)
+                    ,cross-over-mmap-size))
+             (setf position end-position)
+             ,return-value))))))
 
 (defmacro define-read-method (name
                               (&rest lambda-list)
                               length
-                              <proc
-                              <=proc
-                              tproc)
+                              under-mmap-size
+                              over-mmap-size
+                              cross-over-mmap-size)
   `(defmethod ,name ,lambda-list
-     (with-slots (base-stream mmap-size sap position) stream
-       (let ((length ,length))
-         (prog1
-             (cond ((< (+ position length) mmap-size)
-                    ,<proc)
-                   ((<= mmap-size position)
-                    ,<=proc)
-                   (t
-                    ,tproc))
-           (incf position length))))))
+     (with-slots (base-stream mmap-size sap position lock) stream
+       (with-recursive-spinlock (lock)
+         (let ((length ,length))
+           (prog1
+               (cond ((< (+ position length) mmap-size)
+                      ,under-mmap-size)
+                     ((<= mmap-size position)
+                      ,over-mmap-size)
+                     (t
+                      ,cross-over-mmap-size))
+             (incf position length)))))))
 
 (define-write-method sb-gray:stream-write-sequence ((stream mmap-stream)
                                                     (buffer sequence)
@@ -138,7 +133,7 @@ kcfile のトランザクションの実装は
   ())
 
 (defmacro define-write-unsigned-byte-method (name size)
-  `(define-write-method ,name ((stream mmap-stream) integer)
+  `(define-write-method ,name (integer (stream mmap-stream))
      ,size
      (setf (sb-sys:sap-ref-64 sap position) integer)
      (let ((buffer (unsigned-byte-to-vector integer ,size)))
@@ -166,12 +161,41 @@ kcfile のトランザクションの実装は
        (read-sequence buffer base-stream :start (1- mlen) :end ,size)
        (vector-to-unsigned-byte buffer ,size))))
 
-(loop for (write-name read-name size) in '((write-unsigned-byte-64 read-unsigned-byte-64 8)
-                                           (write-unsigned-byte-32 read-unsigned-byte-32 4)
-                                           (write-unsigned-byte-16 read-unsigned-byte-16 2))
-      do (define-write-unsigned-byte-method write-name size)
-         (define-read-unsigned-byte-method read-name size))
+(define-write-unsigned-byte-method write-unsigned-byte-64 8)
+(define-write-unsigned-byte-method write-unsigned-byte-32 4)
+(define-write-unsigned-byte-method write-unsigned-byte-16 2)
+(define-read-unsigned-byte-method read-unsigned-byte-64 8)
+(define-read-unsigned-byte-method read-unsigned-byte-32 4)
+(define-read-unsigned-byte-method read-unsigned-byte-16 2)
 
+
+(defmethod read-seq-at (stream sequence position &key (start 0) end)
+  (with-slots (lock) stream
+    (with-recursive-spinlock (lock)
+      (file-position stream position)
+      (read-sequence sequence stream :start start :end end))))
+
+(defmethod write-seq-at (stream sequence position &key (start 0) end)
+  (with-slots (lock) stream
+    (with-recursive-spinlock (lock)
+      (file-position stream position)
+      (write-sequence sequence stream :start start :end end))))
+
+(defmacro define-stream-at-method (name (&rest args) &body body)
+  `(defmethod ,name (stream position ,@args)
+     (with-slots (lock) stream
+       (with-recursive-spinlock (lock)
+         (file-position stream position)
+         ,@body))))
+
+(define-stream-at-method write-8-at  (integer) (write-byte integer stream))
+(define-stream-at-method write-16-at (integer) (write-unsigned-byte-16 integer stream))
+(define-stream-at-method write-32-at (integer) (write-unsigned-byte-32 integer stream))
+(define-stream-at-method write-64-at (integer) (write-unsigned-byte-64 integer stream))
+(define-stream-at-method read-8-at  () (read-byte stream))
+(define-stream-at-method read-16-at () (read-unsigned-byte-16 stream))
+(define-stream-at-method read-32-at () (read-unsigned-byte-32 stream))
+(define-stream-at-method read-64-at () (read-unsigned-byte-64 stream))
 
 (defmethod sb-gray:stream-file-position ((stream mmap-stream) &optional position-spec)
   (with-slots (base-stream position) stream

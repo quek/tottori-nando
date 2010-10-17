@@ -17,6 +17,21 @@
             (progn ,@body)
          (unlock-spinlock ,spinlock)))))
 
+
+(defun lock-recursive-spinlock (spinlock)
+  (loop with self = sb-thread:*current-thread*
+    for ret = (sb-ext:compare-and-swap (car spinlock) nil self)
+        until (or (null ret) (eq ret self))))
+
+(defmacro with-recursive-spinlock ((spinlock) &body body)
+  (alexandria:once-only (spinlock)
+    `(progn
+       (lock-recursive-spinlock ,spinlock)
+       (unwind-protect
+            (progn ,@body)
+         (unlock-spinlock ,spinlock)))))
+
+
 (defclass spin-rw-lock ()
   ((spinlock :initform (make-spinlock))
    (wc :initform 0)
