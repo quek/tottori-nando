@@ -17,19 +17,26 @@
             (progn ,@body)
          (unlock-spinlock ,spinlock)))))
 
+(defun make-recursive-spinlock ()
+  (cons nil 0))
 
-(defun lock-recursive-spinlock (spinlock)
+(defun lock-recursive-spinlock (recursive-spinlock)
   (loop with self = sb-thread:*current-thread*
-    for ret = (sb-ext:compare-and-swap (car spinlock) nil self)
-        until (or (null ret) (eq ret self))))
+    for ret = (sb-ext:compare-and-swap (car recursive-spinlock) nil self)
+        until (or (null ret) (eq ret self))
+        finally (incf (cdr recursive-spinlock))))
 
-(defmacro with-recursive-spinlock ((spinlock) &body body)
-  (alexandria:once-only (spinlock)
+(defun unlock-recursive-spinlock (recursive-spinlock)
+  (when (decf (cdr recursive-spinlock))
+    (setf (car recursive-spinlock) nil)))
+
+(defmacro with-recursive-spinlock ((recursive-spinlock) &body body)
+  (alexandria:once-only (recursive-spinlock)
     `(progn
-       (lock-recursive-spinlock ,spinlock)
+       (lock-recursive-spinlock ,recursive-spinlock)
        (unwind-protect
             (progn ,@body)
-         (unlock-spinlock ,spinlock)))))
+         (unlock-recursive-spinlock ,recursive-spinlock)))))
 
 
 (defclass spin-rw-lock ()

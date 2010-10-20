@@ -8,7 +8,7 @@
    (position :initform 0)
    (sap :reader mmap-stream-sap)
    (ext :initarg :ext :initform nil)
-   (lock :initform (make-spinlock))))
+   (lock :initform (make-recursive-spinlock))))
 
 (defmethod initialize-instance :after ((stream mmap-stream) &key)
   (with-slots (base-stream file-length mmap-size sap) stream

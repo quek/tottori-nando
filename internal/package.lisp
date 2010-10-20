@@ -11,6 +11,7 @@
            #:with-slotted-rw-lock
            #:make-spinlock
            #:with-spinlock
+           #:make-recursive-spinlock
            #:with-recursive-spinlock
            #:atomic-int
            #:atomic-int-value
